@@ -211,6 +211,8 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      if !challengeExists || (heartbeatExists && time.Since(lastHeartbeat) > 30*time.Second) {
          go ms.PerformValidation(ip, heartbeat.Port)
          ms.challenges[ip] = time.Now()
+     } else {
+         entry.Validated = true
      }
 
      ms.servers[key] = entry
