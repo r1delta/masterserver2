@@ -86,63 +86,87 @@
      c.Status(http.StatusOK)
  }
 
- func (ms *MasterServer) PerformValidation(ip string, port int) {
-     nonce := make([]byte, 4)
-     rand.Read(nonce)
-     nonceStr := "0x" + hex.EncodeToString(nonce)
+func (ms *MasterServer) PerformValidation(ip string, port int) {
+    log.Printf("[Validation] Starting validation for %s:%d", ip, port)
+    
+    nonce := make([]byte, 4)
+    rand.Read(nonce)
+    nonceStr := "0x" + hex.EncodeToString(nonce)
 
-     conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", ip, port), 2*time.Second)
-     if err != nil {
-         return
-     }
-     defer conn.Close()
+    conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", ip, port), 2*time.Second)
+    if err != nil {
+        log.Printf("[Validation] Connection failed to %s:%d: %v", ip, port, err)
+        return
+    }
+    defer conn.Close()
 
-     challengePacket := make([]byte, 23)
-     copy(challengePacket[0:4], []byte{0xFF, 0xFF, 0xFF, 0xFF})
-     challengePacket[4] = 0x48
-     copy(challengePacket[5:12], "connect")
-     copy(challengePacket[12:22], nonceStr)
-     challengePacket[22] = 0x00
+    challengePacket := make([]byte, 23)
+    copy(challengePacket[0:4], []byte{0xFF, 0xFF, 0xFF, 0xFF})
+    challengePacket[4] = 0x48
+    copy(challengePacket[5:12], "connect")
+    copy(challengePacket[12:22], nonceStr)
+    challengePacket[22] = 0x00
 
-     conn.SetDeadline(time.Now().Add(2 * time.Second))
-     conn.Write(challengePacket)
+    log.Printf("[Validation] Sending challenge to %s:%d (nonce: %s)", ip, port, nonceStr)
+    conn.SetDeadline(time.Now().Add(2 * time.Second))
+    _, err = conn.Write(challengePacket)
+    if err != nil {
+        log.Printf("[Validation] Failed to send challenge to %s:%d: %v", ip, port, err)
+        return
+    }
 
-     resp := make([]byte, 1024)
-     n, err := conn.Read(resp)
-     if err != nil || n < 25 {
-         return
-     }
+    resp := make([]byte, 1024)
+    n, err := conn.Read(resp)
+    if err != nil {
+        log.Printf("[Validation] Response read failed from %s:%d: %v", ip, port, err)
+        return
+    }
+    if n < 25 {
+        log.Printf("[Validation] Short response from %s:%d (%d bytes)", ip, port, n)
+        return
+    }
 
-     if !validateResponse(resp, nonceStr) {
-         return
-     }
+    log.Printf("[Validation] Received %d byte response from %s:%d", n, ip, port)
+    if !validateResponse(resp[:n], nonceStr) {
+        log.Printf("[Validation] Validation failed for %s:%d", ip, port)
+        return
+    }
 
-     ms.mu.Lock()
-     defer ms.mu.Unlock()
-
-     key := fmt.Sprintf("%s:%d", ip, port)
-     if server, exists := ms.servers[key]; exists {
-         server.Validated = true
-     }
+    ms.mu.Lock()
+    defer ms.mu.Unlock()
+    key := fmt.Sprintf("%s:%d", ip, port)
+    if server, exists := ms.servers[key]; exists {
+        log.Printf("[Validation] Successfully validated %s:%d (%s)", ip, port, server.HostName)
+        server.Validated = true
+    }
  }
 
- func validateResponse(resp []byte, nonce string) bool {
-     if len(resp) < 25 {
-         return false
-     }
+func validateResponse(resp []byte, nonce string) bool {
+    if len(resp) < 25 {
+        log.Printf("[Validation] Response too short: %d bytes", len(resp))
+        return false
+    }
 
-     // Check header and command
-     if !(resp[0] == 0xFF && resp[1] == 0xFF && resp[2] == 0xFF && resp[3] == 0xFF && resp[4] == 0x49) {
-         return false
-     }
+    headerValid := resp[0] == 0xFF && resp[1] == 0xFF && resp[2] == 0xFF && resp[3] == 0xFF && resp[4] == 0x49
+    if !headerValid {
+        log.Printf("[Validation] Invalid header bytes: 0x%X 0x%X 0x%X 0x%X 0x%X", 
+            resp[0], resp[1], resp[2], resp[3], resp[4])
+        return false
+    }
 
-     // Check 'connect' string
-     if string(resp[9:16]) != "connect" {
-         return false
-     }
+    connectStr := string(resp[9:16])
+    if connectStr != "connect" {
+        log.Printf("[Validation] Invalid connect string: %q", connectStr)
+        return false
+    }
 
-     // Check nonce
-     return string(resp[16:26]) == nonce
+    responseNonce := string(resp[16:26])
+    if responseNonce != nonce {
+        log.Printf("[Validation] Nonce mismatch. Expected %q, got %q", nonce, responseNonce)
+        return false
+    }
+
+    return true
  }
 
  func (ms *MasterServer) GetServers(c *gin.Context) {
@@ -159,16 +183,18 @@
      c.JSON(http.StatusOK, validServers)
  }
 
- func (ms *MasterServer) CleanupOldEntries() {
-     for range time.Tick(30 * time.Second) {
-         ms.mu.Lock()
-         for k, s := range ms.servers {
-             if time.Since(s.LastUpdated) > 90*time.Second {
-                 delete(ms.servers, k)
-             }
-         }
-         ms.mu.Unlock()
-     }
+func (ms *MasterServer) CleanupOldEntries() {
+    for range time.Tick(30 * time.Second) {
+        ms.mu.Lock()
+        for k, s := range ms.servers {
+            if time.Since(s.LastUpdated) > 90*time.Second {
+                log.Printf("[Cleanup] Removing server %s (%s:%d) Last updated: %v ago, Validated: %v",
+                    s.HostName, s.IP, s.Port, time.Since(s.LastUpdated), s.Validated)
+                delete(ms.servers, k)
+            }
+        }
+        ms.mu.Unlock()
+    }
  }
 
  func main() {
