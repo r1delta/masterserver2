@@ -115,35 +115,40 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      // Validate port
      if heartbeat.Port <= 1024 || heartbeat.Port > 65535 {
          log.Printf("Invalid port number %d in heartbeat from %s", heartbeat.Port, c.ClientIP())
-         c.AbortWithStatus(http.StatusBadRequest)
+         c.String(http.StatusBadRequest, "Invalid port number (must be 1025-65535)")
+         c.Abort()
          return
      }
 
-     // Validate hostname
-     if heartbeat.HostName == "" || len(heartbeat.HostName) > 64 || strings.ContainsAny(heartbeat.HostName, "\";<>'{}()") {
+     // Validate hostname (now allows apostrophes)
+     if heartbeat.HostName == "" || len(heartbeat.HostName) > 64 || strings.ContainsAny(heartbeat.HostName, "\";<>{}()") {
          log.Printf("Invalid hostname %q from %s", heartbeat.HostName, c.ClientIP())
-         c.AbortWithStatus(http.StatusBadRequest)
+         c.String(http.StatusBadRequest, "Invalid hostname format - must be 1-64 characters without special characters except apostrophes")
+         c.Abort()
          return
      }
 
      // Validate map name
      if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName) {
          log.Printf("Invalid map name %q from %s", heartbeat.MapName, c.ClientIP())
-         c.AbortWithStatus(http.StatusBadRequest)
+         c.String(http.StatusBadRequest, "Invalid map name format (lowercase letters, numbers and underscores only)")
+         c.Abort()
          return
      }
 
      // Validate game mode
      if heartbeat.GameMode == "" || len(heartbeat.GameMode) > 32 || !isValidGameMode(heartbeat.GameMode) {
          log.Printf("Invalid game mode %q from %s", heartbeat.GameMode, c.ClientIP())
-         c.AbortWithStatus(http.StatusBadRequest)
+         c.String(http.StatusBadRequest, "Invalid game mode format (lowercase letters, numbers and underscores only)")
+         c.Abort()
          return
      }
 
      // Validate max players
      if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers >= 20 {
          log.Printf("Invalid max players %d from %s", heartbeat.MaxPlayers, c.ClientIP())
-         c.AbortWithStatus(http.StatusBadRequest)
+         c.String(http.StatusBadRequest, "Invalid max players (must be 2-19)")
+         c.Abort()
          return
      }
 
@@ -151,7 +156,8 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      for _, player := range heartbeat.Players {
          if strings.TrimSpace(player.Name) == "" {
              log.Printf("Empty player name in heartbeat from %s", c.ClientIP())
-             c.AbortWithStatus(http.StatusBadRequest)
+             c.String(http.StatusBadRequest, "Player names cannot be empty")
+             c.Abort()
              return
          }
      }
