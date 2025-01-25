@@ -101,8 +101,14 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      }
 
      clientIP := c.Request.RemoteAddr
+     // Add IP parsing to handle potential port suffix
+     ip, _, err := net.SplitHostPort(clientIP)
+     if err != nil {
+         // If there's no port, use the address directly
+         ip = clientIP
+     }
      
-     key := fmt.Sprintf("%s:%d", clientIP, heartbeat.Port)
+     key := fmt.Sprintf("%s:%d", ip, heartbeat.Port)
 
      ms.mu.Lock()
      defer ms.mu.Unlock()
@@ -112,7 +118,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          MapName:     heartbeat.MapName,
          GameMode:    heartbeat.GameMode,
          MaxPlayers:  heartbeat.MaxPlayers,
-         IP:          resolvedIP,
+         IP:          ip,
          Port:        heartbeat.Port,
          Players:     heartbeat.Players,
          LastUpdated: time.Now(),
@@ -120,7 +126,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      }
 
      ms.servers[key] = entry
-     go ms.PerformValidation(resolvedIP, heartbeat.Port)
+     go ms.PerformValidation(ip, heartbeat.Port)
 
      c.Status(http.StatusOK)
  }
