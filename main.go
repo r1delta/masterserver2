@@ -11,6 +11,7 @@
      "strings"
      "sync"
      "time"
+     "unicode"
 
      "github.com/gin-gonic/gin"
      "golang.org/x/time/rate"
@@ -33,6 +34,24 @@
      Gen  int    `json:"gen"`
      Lvl  int    `json:"lvl"`
      Team int    `json:"team"`
+ }
+
+ func isValidMapName(name string) bool {
+     for _, c := range name {
+         if !unicode.IsLower(c) && !unicode.IsDigit(c) && c != '_' {
+             return false
+         }
+     }
+     return true
+ }
+
+ func isValidGameMode(mode string) bool {
+     for _, c := range mode {
+         if !unicode.IsLower(c) && !unicode.IsDigit(c) && c != '_' {
+             return false
+         }
+     }
+     return true
  }
 
  type MasterServer struct {
@@ -93,11 +112,48 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          return
      }
 
-     // Add port validation
-     if heartbeat.Port <= 0 || heartbeat.Port > 65535 {
+     // Validate port
+     if heartbeat.Port <= 1024 || heartbeat.Port > 65535 {
          log.Printf("Invalid port number %d in heartbeat from %s", heartbeat.Port, c.ClientIP())
          c.AbortWithStatus(http.StatusBadRequest)
          return
+     }
+
+     // Validate hostname
+     if heartbeat.HostName == "" || len(heartbeat.HostName) > 64 || strings.ContainsAny(heartbeat.HostName, "\";<>'{}()") {
+         log.Printf("Invalid hostname %q from %s", heartbeat.HostName, c.ClientIP())
+         c.AbortWithStatus(http.StatusBadRequest)
+         return
+     }
+
+     // Validate map name
+     if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName) {
+         log.Printf("Invalid map name %q from %s", heartbeat.MapName, c.ClientIP())
+         c.AbortWithStatus(http.StatusBadRequest)
+         return
+     }
+
+     // Validate game mode
+     if heartbeat.GameMode == "" || len(heartbeat.GameMode) > 32 || !isValidGameMode(heartbeat.GameMode) {
+         log.Printf("Invalid game mode %q from %s", heartbeat.GameMode, c.ClientIP())
+         c.AbortWithStatus(http.StatusBadRequest)
+         return
+     }
+
+     // Validate max players
+     if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers >= 20 {
+         log.Printf("Invalid max players %d from %s", heartbeat.MaxPlayers, c.ClientIP())
+         c.AbortWithStatus(http.StatusBadRequest)
+         return
+     }
+
+     // Validate player names
+     for _, player := range heartbeat.Players {
+         if strings.TrimSpace(player.Name) == "" {
+             log.Printf("Empty player name in heartbeat from %s", c.ClientIP())
+             c.AbortWithStatus(http.StatusBadRequest)
+             return
+         }
      }
 
      clientIP := c.Request.RemoteAddr
