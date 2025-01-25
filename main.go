@@ -204,7 +204,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      ms.lastHeartbeats[ip] = time.Now()
      
      // Get time of last challenge and last heartbeat
-     lastChallenge, challengeExists := ms.challenges[ip]
+     _, challengeExists := ms.challenges[ip]
      lastHeartbeat, heartbeatExists := ms.lastHeartbeats[ip]
 
      // Challenge if: never challenged OR no valid heartbeat in past 30s
