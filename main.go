@@ -3,6 +3,7 @@
  import (
      "encoding/hex"
      "fmt"
+     "log"
      "math/rand"
      "net"
      "net/http"
