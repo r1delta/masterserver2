@@ -236,32 +236,65 @@ func (ms *MasterServer) CleanupOldEntries() {
     }
  }
 
- func main() {
-     gin.SetMode(gin.ReleaseMode)
-     
-     ms := NewMasterServer()
-     go ms.CleanupOldEntries()
+func fetchCloudflareIPs() ([]string, error) {
+    client := &http.Client{Timeout: 10 * time.Second}
+    resp, err := client.Get("https://www.cloudflare.com/ips-v4")
+    if err != nil {
+        return nil, fmt.Errorf("failed to fetch Cloudflare IPs: %v", err)
+    }
+    defer resp.Body.Close()
 
-     r := gin.Default()
-     
-     // Configure trusted Cloudflare proxies
-     r.SetTrustedProxies([]string{
-         "173.245.48.0/20",
-         "103.21.244.0/22",
-         "103.22.200.0/22",
-         "103.31.4.0/22",
-         "141.101.64.0/18",
-         "108.162.192.0/18",
-         "190.93.240.0/20",
-         "188.114.96.0/20",
-         "197.234.240.0/22",
-         "198.41.128.0/17",
-         "162.158.0.0/15",
-         "104.16.0.0/13",
-         "104.24.0.0/14",
-         "172.64.0.0/13",
-         "131.0.72.0/22",
-     })
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read response body: %v", err)
+    }
+
+    ips := strings.Split(strings.TrimSpace(string(body)), "\n")
+    if len(ips) == 0 {
+        return nil, fmt.Errorf("empty Cloudflare IP list received")
+    }
+
+    return ips, nil
+}
+
+func main() {
+    gin.SetMode(gin.ReleaseMode)
+    
+    // Fetch Cloudflare IPs
+    cfIPs, err := fetchCloudflareIPs()
+    if err != nil {
+        log.Printf("Warning: %v. Using hardcoded fallback IPs", err)
+        // Fallback to the latest known IPs
+        cfIPs = []string{
+            "173.245.48.0/20",
+            "103.21.244.0/22",
+            "103.22.200.0/22",
+            "103.31.4.0/22",
+            "141.101.64.0/18",
+            "108.162.192.0/18",
+            "190.93.240.0/20",
+            "188.114.96.0/20",
+            "197.234.240.0/22",
+            "198.41.128.0/17",
+            "162.158.0.0/15",
+            "104.16.0.0/13",
+            "104.24.0.0/14",
+            "172.64.0.0/13",
+            "131.0.72.0/22",
+        }
+    }
+
+    ms := NewMasterServer()
+    go ms.CleanupOldEntries()
+
+    r := gin.Default()
+    
+    // Configure trusted Cloudflare proxies
+    r.SetTrustedProxies(cfIPs)
 
      // Add Cloudflare IP handling middleware
      r.Use(func(c *gin.Context) {
