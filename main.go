@@ -316,7 +316,7 @@ func main() {
      r.DELETE("/heartbeat/:port", ms.HandleDelete)
      r.GET("/servers", ms.GetServers)
 
-     r.Run(":8080")
+     r.Run(":80")
  }
 
  func (ms *MasterServer) HandleDelete(c *gin.Context) {
