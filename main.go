@@ -59,6 +59,14 @@
      }
 
      if err := c.ShouldBindJSON(&heartbeat); err != nil {
+         log.Printf("Invalid heartbeat format from %s: %v", c.ClientIP(), err)
+         c.AbortWithStatus(http.StatusBadRequest)
+         return
+     }
+
+     // Add port validation
+     if heartbeat.Port <= 0 || heartbeat.Port > 65535 {
+         log.Printf("Invalid port number %d in heartbeat from %s", heartbeat.Port, c.ClientIP())
          c.AbortWithStatus(http.StatusBadRequest)
          return
      }
