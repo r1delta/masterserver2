@@ -57,15 +57,17 @@
  type MasterServer struct {
      servers   map[string]*ServerEntry
      mu        sync.RWMutex
-     limiter   *rate.Limiter
-     challenges map[string]chan bool
+     limiter        *rate.Limiter
+     challenges     map[string]time.Time // Track last challenge time per IP
+     lastHeartbeats map[string]time.Time // Track last valid heartbeat time per IP
  }
 
  func NewMasterServer() *MasterServer {
      return &MasterServer{
          servers:    make(map[string]*ServerEntry),
          limiter:    rate.NewLimiter(rate.Every(10*time.Second/15), 15),
-         challenges: make(map[string]chan bool),
+         challenges:     make(map[string]time.Time),
+         lastHeartbeats: make(map[string]time.Time),
      }
  }
 
@@ -198,8 +200,21 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          Validated:   false,
      }
 
+     // Update last valid heartbeat time
+     ms.lastHeartbeats[ip] = time.Now()
+     
+     // Get time of last challenge and last heartbeat
+     lastChallenge, challengeExists := ms.challenges[ip]
+     lastHeartbeat, heartbeatExists := ms.lastHeartbeats[ip]
+
+     // Challenge if: never challenged OR no valid heartbeat in past 30s
+     if !challengeExists || (heartbeatExists && time.Since(lastHeartbeat) > 30*time.Second) {
+         go ms.PerformValidation(ip, heartbeat.Port)
+         ms.challenges[ip] = time.Now()
+     }
+
      ms.servers[key] = entry
-     go ms.PerformValidation(ip, heartbeat.Port)
+     
 
      c.Status(http.StatusOK)
  }
