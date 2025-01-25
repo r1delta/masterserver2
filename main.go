@@ -3,10 +3,12 @@
  import (
      "encoding/hex"
      "fmt"
+     "io"
      "log"
      "math/rand"
      "net"
      "net/http"
+     "strings"
      "sync"
      "time"
 
@@ -48,7 +50,34 @@
      }
  }
 
- func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
+func getPublicIP() (string, error) {
+    client := &http.Client{
+        Timeout: 5 * time.Second,
+    }
+    resp, err := client.Get("http://eth0.me")
+    if err != nil {
+        return "", fmt.Errorf("failed to fetch public IP: %v", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return "", fmt.Errorf("failed to read response body: %v", err)
+    }
+
+    ip := strings.TrimSpace(string(body))
+    if net.ParseIP(ip) == nil {
+        return "", fmt.Errorf("invalid IP address received: %s", ip)
+    }
+
+    return ip, nil
+}
+
+func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      var heartbeat struct {
          HostName   string       `json:"host_name"`
          MapName    string       `json:"map_name"`
@@ -71,7 +100,20 @@
          return
      }
 
-     key := fmt.Sprintf("%s:%d", c.ClientIP(), heartbeat.Port)
+     clientIP := c.ClientIP()
+     resolvedIP := clientIP
+
+     if clientIP == "127.0.0.1" {
+         publicIP, err := getPublicIP()
+         if err != nil {
+             log.Printf("Failed to resolve public IP: %v", err)
+         } else {
+             resolvedIP = publicIP
+             log.Printf("Resolved public IP for localhost: %s", publicIP)
+         }
+     }
+
+     key := fmt.Sprintf("%s:%d", resolvedIP, heartbeat.Port)
 
      ms.mu.Lock()
      defer ms.mu.Unlock()
@@ -81,7 +123,7 @@
          MapName:     heartbeat.MapName,
          GameMode:    heartbeat.GameMode,
          MaxPlayers:  heartbeat.MaxPlayers,
-         IP:          c.ClientIP(),
+         IP:          resolvedIP,
          Port:        heartbeat.Port,
          Players:     heartbeat.Players,
          LastUpdated: time.Now(),
@@ -89,7 +131,7 @@
      }
 
      ms.servers[key] = entry
-     go ms.PerformValidation(c.ClientIP(), heartbeat.Port)
+     go ms.PerformValidation(resolvedIP, heartbeat.Port)
 
      c.Status(http.StatusOK)
  }
