@@ -107,6 +107,17 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          // If there's no port, use the address directly
          ip = clientIP
      }
+
+     // Add loopback IP override
+     if ip == "127.0.0.1" {
+         publicIP, err := getPublicIP()
+         if err != nil {
+             log.Printf("Could not get public IP for loopback override: %v", err)
+         } else {
+             ip = publicIP
+             log.Printf("Overriding loopback IP with public IP: %s", ip)
+         }
+     }
      
      key := fmt.Sprintf("%s:%d", ip, heartbeat.Port)
 
