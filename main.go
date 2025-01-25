@@ -100,20 +100,9 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          return
      }
 
-     clientIP := c.ClientIP()
-     resolvedIP := clientIP
-
-     if clientIP == "127.0.0.1" {
-         publicIP, err := getPublicIP()
-         if err != nil {
-             log.Printf("Failed to resolve public IP: %v", err)
-         } else {
-             resolvedIP = publicIP
-             log.Printf("Resolved public IP for localhost: %s", publicIP)
-         }
-     }
-
-     key := fmt.Sprintf("%s:%d", resolvedIP, heartbeat.Port)
+     clientIP := c.Request.RemoteAddr
+     
+     key := fmt.Sprintf("%s:%d", clientIP, heartbeat.Port)
 
      ms.mu.Lock()
      defer ms.mu.Unlock()
@@ -248,10 +237,39 @@ func (ms *MasterServer) CleanupOldEntries() {
  }
 
  func main() {
+     gin.SetMode(gin.ReleaseMode)
+     
      ms := NewMasterServer()
      go ms.CleanupOldEntries()
 
      r := gin.Default()
+     
+     // Configure trusted Cloudflare proxies
+     r.SetTrustedProxies([]string{
+         "173.245.48.0/20",
+         "103.21.244.0/22",
+         "103.22.200.0/22",
+         "103.31.4.0/22",
+         "141.101.64.0/18",
+         "108.162.192.0/18",
+         "190.93.240.0/20",
+         "188.114.96.0/20",
+         "197.234.240.0/22",
+         "198.41.128.0/17",
+         "162.158.0.0/15",
+         "104.16.0.0/13",
+         "104.24.0.0/14",
+         "172.64.0.0/13",
+         "131.0.72.0/22",
+     })
+
+     // Add Cloudflare IP handling middleware
+     r.Use(func(c *gin.Context) {
+         if cfConnectingIP := c.GetHeader("CF-Connecting-IP"); cfConnectingIP != "" {
+             c.Request.RemoteAddr = cfConnectingIP
+         }
+         c.Next()
+     })
 
      r.Use(func(c *gin.Context) {
          if !ms.limiter.Allow() {
@@ -265,12 +283,13 @@ func (ms *MasterServer) CleanupOldEntries() {
      r.DELETE("/heartbeat/:port", ms.HandleDelete)
      r.GET("/servers", ms.GetServers)
 
-     r.Run(":80")
+     r.Run(":8080")
  }
 
  func (ms *MasterServer) HandleDelete(c *gin.Context) {
      port := c.Param("port")
-     key := fmt.Sprintf("%s:%s", c.ClientIP(), port)
+     clientIP := c.Request.RemoteAddr
+     key := fmt.Sprintf("%s:%s", clientIP, port)
 
      ms.mu.Lock()
      defer ms.mu.Unlock()
