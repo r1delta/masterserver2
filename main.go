@@ -58,8 +58,8 @@
      servers   map[string]*ServerEntry
      mu        sync.RWMutex
      limiter        *rate.Limiter
-     challenges     map[string]time.Time // Track last challenge time per IP
-     lastHeartbeats map[string]time.Time // Track last valid heartbeat time per IP
+     challenges     map[string]time.Time // Track last challenge time per key (IP:Port)
+     lastHeartbeats map[string]time.Time // Track last valid heartbeat time per key (IP:Port)
  }
 
  func NewMasterServer() *MasterServer {
@@ -188,6 +188,22 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
      ms.mu.Lock()
      defer ms.mu.Unlock()
 
+     // Check server limit per IP before adding new entry
+     if _, exists := ms.servers[key]; !exists {
+         count := 0
+         for _, s := range ms.servers {
+             if s.IP == ip {
+                 count++
+             }
+         }
+         if count >= 5 {
+             log.Printf("Too many servers (%d) for IP %s", count, ip)
+             c.String(http.StatusBadRequest, "Maximum 5 servers per IP")
+             c.Abort()
+             return
+         }
+     }
+
      entry := &ServerEntry{
          HostName:    heartbeat.HostName,
          MapName:     heartbeat.MapName,
@@ -200,17 +216,17 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
          Validated:   false,
      }
 
+     // Get time of last challenge and last heartbeat using server key
+     prevLastHeartbeat, heartbeatExists := ms.lastHeartbeats[key]
+     _, challengeExists := ms.challenges[key]
+
      // Update last valid heartbeat time
-     ms.lastHeartbeats[ip] = time.Now()
-     
-     // Get time of last challenge and last heartbeat
-     _, challengeExists := ms.challenges[ip]
-     lastHeartbeat, heartbeatExists := ms.lastHeartbeats[ip]
+     ms.lastHeartbeats[key] = time.Now()
 
      // Challenge if: never challenged OR no valid heartbeat in past 30s
-     if !challengeExists || (heartbeatExists && time.Since(lastHeartbeat) > 30*time.Second) {
+     if !challengeExists || (heartbeatExists && time.Since(prevLastHeartbeat) > 30*time.Second) {
          go ms.PerformValidation(ip, heartbeat.Port)
-         ms.challenges[ip] = time.Now()
+         ms.challenges[key] = time.Now()
      } else {
          entry.Validated = true
      }
