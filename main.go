@@ -1,21 +1,24 @@
- package main
+package main
 
- import (
-     "encoding/hex"
-     "fmt"
-     "io"
-     "log"
-     "math/rand"
-     "net"
-     "net/http"
-     "strings"
-     "sync"
-     "time"
-     "unicode"
+import (
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log"
+	"math/rand"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
 
-     "github.com/gin-gonic/gin"
-     "golang.org/x/time/rate"
- )
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/time/rate"
+)
 
  type ServerEntry struct {
      HostName    string        `json:"host_name"`
@@ -34,6 +37,11 @@
      Gen  int    `json:"gen"`
      Lvl  int    `json:"lvl"`
      Team int    `json:"team"`
+ }
+
+ type DiscordAuthPayload struct {
+    DiscordId string `json:"discord_id"`
+    Username  string `json:"username"`
  }
 
  func isValidMapName(name string) bool {
@@ -60,6 +68,136 @@
      limiter        *rate.Limiter
      challenges     map[string]time.Time // Track last challenge time per key (IP:Port)
      lastHeartbeats map[string]time.Time // Track last valid heartbeat time per key (IP:Port)
+     db *sql.DB
+}
+
+func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
+    // takes an array of discord ids and usernames and creates tokens if they don't already exist
+    var payload []DiscordAuthPayload
+    if err := c.ShouldBindJSON(&payload); err != nil {
+        log.Printf("Invalid Discord auth payload from %s: %v", c.ClientIP(), err)
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    if len(payload) == 0 {
+        log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    log.Println("Discord auth payload received: ", payload)
+
+    // create a new token object, for the auth token you receive from the auth flow
+    tokens := make(map[string]string)
+    for _, p := range payload {
+        if p.DiscordId == "" || p.Username == "" {
+            log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
+            c.AbortWithStatus(http.StatusBadRequest)
+            return
+        }
+
+        // check if token already exists
+        var token string
+        err := ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", p.DiscordId).Scan(&token)
+        if err != nil {
+            if err == sql.ErrNoRows {
+                // create a new token
+                token, err = jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+                    "discord_id": p.DiscordId,
+                    "username":   p.Username,
+                }).SignedString([]byte("secret"))
+                if err != nil {
+                    log.Printf("Failed to create JWT token: %v", err)
+                    c.AbortWithStatus(http.StatusInternalServerError)
+                    return
+                }
+
+                // store the token in the database
+                _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", p.DiscordId, p.Username, token)
+                if err != nil {
+                    log.Printf("Failed to store token in database: %v", err)
+                    c.AbortWithStatus(http.StatusInternalServerError)
+                    return
+                }
+            } else {
+                log.Printf("Failed to query token from database: %v", err)
+                c.AbortWithStatus(http.StatusInternalServerError)
+                return
+            }
+        }
+
+        tokens[p.DiscordId] = token
+    }
+
+    c.JSON(http.StatusOK, tokens)
+}
+
+func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
+    var payload DiscordAuthPayload
+    if err := c.ShouldBindJSON(&payload); err != nil {
+        log.Printf("Invalid Discord auth payload from %s: %v", c.ClientIP(), err)
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    if payload.DiscordId == "" {
+        log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    log.Println("Discord auth payload received: ", payload)
+    s,err := ms.db.Exec("DELETE FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
+    if(err != nil){
+        log.Printf("Failed to delete token from database: %v", err);
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+    log.Println("Token deleted from database: ", s)
+    c.Status(http.StatusOK)
+ }
+
+ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
+    var payload DiscordAuthPayload
+    if err := c.ShouldBindJSON(&payload); err != nil {
+        log.Printf("Invalid Discord auth payload from %s: %v", c.ClientIP(), err)
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    if payload.DiscordId == "" || payload.Username == "" {
+        log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+   
+   log.Println("Discord auth payload received: ", payload)
+
+    // create a new token object, for the auth token you receive from the auth flow
+    token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+        "discord_id": payload.DiscordId,
+        "username": payload.Username,
+    }).SignedString([]byte("secret"))
+    if err != nil {
+        log.Printf("Failed to create JWT token: %v", err);
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    log.Println("JWT token created: ", token)
+
+    // store the token in the database
+   result,err := ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", payload.DiscordId, payload.Username, token)
+    if err != nil {
+        log.Printf("Failed to store token in database: %v", err);
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+    log.Println("Token stored in database: ", result)
+
+    c.JSON(http.StatusOK, gin.H{ "token": token })
  }
 
  func NewMasterServer() *MasterServer {
@@ -375,7 +513,14 @@ func fetchCloudflareIPs() ([]string, error) {
 
 func main() {
     gin.SetMode(gin.ReleaseMode)
+    db, err := sql.Open("sqlite3", "r1delta.db")
+    if err != nil {
+		log.Fatal(err)
+	}
+    defer db.Close()
+
     
+
     // Fetch Cloudflare IPs
     cfIPs, err := fetchCloudflareIPs()
     if err != nil {
@@ -399,8 +544,17 @@ func main() {
             "131.0.72.0/22",
         }
     }
+    // create discord auth table primary key discord_id and username and token
+    // statement, err  := db.Prepare("CREATE TABLE IF NOT EXISTS discord_auth (discord_id TEXT PRIMARY KEY, username TEXT, token TEXT)")
+    // if err != nil {
+	// 	log.Println("Error in creating table")
+	// } else {
+	// 	log.Println("Successfully created table")
+	// }
+    // statement.Exec()
 
     ms := NewMasterServer()
+    ms.db = db
     go ms.CleanupOldEntries()
 
     r := gin.Default()
@@ -427,7 +581,9 @@ func main() {
      r.POST("/heartbeat", ms.HandleHeartbeat)
      r.DELETE("/heartbeat/:port", ms.HandleDelete)
      r.GET("/servers", ms.GetServers)
-
+     r.POST("/discord-auth", ms.HandleDiscordClientAuth)
+     r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk)
+     r.DELETE("/discord-auth", ms.HandleDiscordDelete)
      r.Run(":80")
  }
 
