@@ -3,12 +3,15 @@ package main
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
+	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/time/rate"
 )
@@ -69,6 +73,150 @@ import (
      challenges     map[string]time.Time // Track last challenge time per key (IP:Port)
      lastHeartbeats map[string]time.Time // Track last valid heartbeat time per key (IP:Port)
      db *sql.DB
+}
+
+func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
+
+    var code,e = c.GetQuery("code")
+    if e != true {
+        log.Println("Discord auth code not found", code)
+        log.Printf("Invalid Discord auth code from %s: missing fields", c.ClientIP())
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+    
+
+    log.Println("Discord auth code received: ", code)
+
+    // exchange the code for a token
+    // create a new token object, for the auth token you receive from the auth flow
+    // var CLIENT_ID =
+    // from .env file
+    CLIENT_SECRET := os.Getenv("CLIENT_SECRET")
+    REDIRECT_URI := os.Getenv("REDIRECT_URI")
+    log.Println("CLIENT_SECRET: ", CLIENT_SECRET)
+    log.Println("REDIRECT_URI: ", REDIRECT_URI)
+    formData := url.Values{}
+    formData.Set("grant_type", "authorization_code")
+    formData.Set("code", code)
+    formData.Set("redirect_uri", REDIRECT_URI)
+    formData.Set("client_id", os.Getenv("CLIENT_ID"))
+    formData.Set("client_secret", CLIENT_SECRET)
+
+    req, err := http.NewRequest(
+        "POST",
+        "https://discord.com/api/oauth2/token",
+        strings.NewReader(formData.Encode()),
+    )
+
+    // log the json body
+    
+   
+    if err != nil {
+        log.Printf("Failed to create request: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+    
+    resp, err := http.DefaultClient.Do(req)
+    
+    // parse the body into json
+
+    body, err := io.ReadAll(resp.Body)
+
+    if err != nil {
+        log.Printf("Failed to exchange code for token: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Unexpected status code: %d", resp.StatusCode)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    var tokenResponse struct {
+        TokenType string `json:"token_type"`
+        AccessToken string `json:"access_token"`
+        ExpiresIn int `json:"expires_in"`
+        RefreshToken string `json:"refresh_token"`
+        Scope string `json:"scope"`
+    }
+
+    if err := json.Unmarshal(body,&tokenResponse); err != nil {
+        log.Printf("Failed to decode token response: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    // get user info
+    req, err = http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
+    if err != nil {
+        log.Printf("Failed to create request: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tokenResponse.AccessToken))
+
+    resp, err = http.DefaultClient.Do(req)
+    if err != nil {
+        log.Printf("Failed to get user info: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Unexpected status code: %d", resp.StatusCode)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    var userResponse struct {
+        ID       string `json:"id"`
+        Username string `json:"username"`
+    }
+
+    if err := json.NewDecoder(resp.Body).Decode(&userResponse); err != nil {
+        log.Printf("Failed to decode user response: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    // create a new token object, for the auth token you receive from the auth flow
+    token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+        "discord_id": userResponse.ID,
+        "username":   userResponse.Username,
+    }).SignedString([]byte("secret"))
+    if err != nil {
+        log.Printf("Failed to create JWT token: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    // store the token in the database
+    _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", userResponse.ID, userResponse.Username, token)
+    if err != nil {
+        log.Printf("Failed to store token in database: %v", err)
+        // check if contains unique constraint error
+        if(err.Error() == "UNIQUE constraint failed: discord_auth.discord_id") {
+            var token string
+            err := ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID).Scan(&token)
+            if err != nil {
+                log.Printf("Failed to query token from database: %v", err)
+                c.AbortWithStatus(http.StatusInternalServerError)
+                return
+            }
+            c.JSON(http.StatusOK, gin.H{ "token": token })
+        }
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{ "token": token })
 }
 
 func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
@@ -175,29 +323,23 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
    
    log.Println("Discord auth payload received: ", payload)
 
-    // create a new token object, for the auth token you receive from the auth flow
-    token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "discord_id": payload.DiscordId,
-        "username": payload.Username,
-    }).SignedString([]byte("secret"))
-    if err != nil {
-        log.Printf("Failed to create JWT token: %v", err);
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
-    }
-
-    log.Println("JWT token created: ", token)
-
     // store the token in the database
-   result,err := ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", payload.DiscordId, payload.Username, token)
-    if err != nil {
-        log.Printf("Failed to store token in database: %v", err);
-        c.AbortWithStatus(http.StatusInternalServerError)
+    // res,err = ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
+    s,err := ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
+    if(err != nil){
+        log.Printf("Failed to query token from database: %v", err)
+        c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1 Delta discord" })
         return
     }
-    log.Println("Token stored in database: ", result)
-
-    c.JSON(http.StatusOK, gin.H{ "token": token })
+    var res string
+    err = s.Scan(&res)
+    if(err != nil){
+        log.Printf("Failed to scan token from database: %v", err)
+        c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1 Delta discord" })
+        return
+    }
+    log.Println("Token stored in database: ", res)
+    c.JSON(http.StatusOK, gin.H{ "token": res })
  }
 
  func NewMasterServer() *MasterServer {
@@ -512,6 +654,12 @@ func fetchCloudflareIPs() ([]string, error) {
 }
 
 func main() {
+
+    err := godotenv.Load()
+    if err != nil {
+    log.Fatal("Error loading .env file")
+    }
+
     gin.SetMode(gin.ReleaseMode)
     db, err := sql.Open("sqlite3", "r1delta.db")
     if err != nil {
@@ -581,6 +729,7 @@ func main() {
      r.POST("/heartbeat", ms.HandleHeartbeat)
      r.DELETE("/heartbeat/:port", ms.HandleDelete)
      r.GET("/servers", ms.GetServers)
+     r.GET("/discord-auth", ms.HandleDiscordAuth)
      r.POST("/discord-auth", ms.HandleDiscordClientAuth)
      r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk)
      r.DELETE("/discord-auth", ms.HandleDiscordDelete)
