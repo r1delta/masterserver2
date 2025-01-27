@@ -46,6 +46,7 @@ import (
  type DiscordAuthPayload struct {
     DiscordId string `json:"discord_id"`
     Username  string `json:"username"`
+    DisplayName string `json:"display_name"`
  }
 
  func isValidMapName(name string) bool {
@@ -254,6 +255,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
                 token, err = jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
                     "discord_id": p.DiscordId,
                     "username":   p.Username,
+
                 }).SignedString([]byte("secret"))
                 if err != nil {
                     log.Printf("Failed to create JWT token: %v", err)
@@ -262,7 +264,8 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
                 }
 
                 // store the token in the database
-                _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", p.DiscordId, p.Username, token)
+                
+                _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token,display_name) VALUES (?, ?, ?,?)", p.DiscordId, p.Username, token,p.DisplayName)
                 if err != nil {
                     log.Printf("Failed to store token in database: %v", err)
                     c.AbortWithStatus(http.StatusInternalServerError)
@@ -703,6 +706,17 @@ func main() {
 
     ms := NewMasterServer()
     ms.db = db
+
+    // ms.db
+    // update the discord_auth table adding display_name field
+    statement, err  := db.Prepare("ALTER TABLE discord_auth ADD COLUMN display_name TEXT")
+    if err != nil {
+        log.Println("Error in creating table")
+    } else {
+        log.Println("Successfully created table")
+    }
+    statement.Exec()
+
     go ms.CleanupOldEntries()
 
     r := gin.Default()
