@@ -95,8 +95,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     // from .env file
     CLIENT_SECRET := os.Getenv("CLIENT_SECRET")
     REDIRECT_URI := os.Getenv("REDIRECT_URI")
-    log.Println("CLIENT_SECRET: ", CLIENT_SECRET)
-    log.Println("REDIRECT_URI: ", REDIRECT_URI)
     formData := url.Values{}
     formData.Set("grant_type", "authorization_code")
     formData.Set("code", code)
@@ -206,7 +204,8 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
         // check if contains unique constraint error
         if(err.Error() == "UNIQUE constraint failed: discord_auth.discord_id") {
             var token string
-            err := ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID).Scan(&token)
+            row := ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID)
+            err = row.Scan(&token)
             if err != nil {
                 log.Printf("Failed to query token from database: %v", err)
                 c.AbortWithStatus(http.StatusInternalServerError)
