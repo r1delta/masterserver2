@@ -706,17 +706,6 @@ func main() {
 
     ms := NewMasterServer()
     ms.db = db
-
-    // ms.db
-    // update the discord_auth table adding display_name field
-    statement, err  := db.Prepare("ALTER TABLE discord_auth ADD COLUMN display_name TEXT")
-    if err != nil {
-        log.Println("Error in creating table")
-    } else {
-        log.Println("Successfully created table")
-    }
-    statement.Exec()
-
     go ms.CleanupOldEntries()
 
     r := gin.Default()
