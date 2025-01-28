@@ -76,6 +76,83 @@ import (
      db *sql.DB
 }
 
+func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
+    var token string
+    // get the token from the authorization header
+    if auth := c.GetHeader("Authorization"); auth != "" {
+        if strings.HasPrefix(auth, "Bearer ") {
+            token = strings.TrimPrefix(auth, "Bearer ")
+        } else {
+            log.Printf("Invalid authorization header from %s: %s", c.ClientIP(), auth)
+            c.AbortWithStatus(http.StatusBadRequest)
+            return
+        }
+    }
+
+    var serverIp string
+
+    // get the server ip from the json body
+    var server struct {
+        IP string `json:"ip"`
+    }
+    if err := c.ShouldBindJSON(&server); err != nil {
+        log.Printf("Invalid server IP format from %s: %v", c.ClientIP(), err)
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    if server.IP == "" {
+        log.Printf("Invalid server IP from %s: missing fields", c.ClientIP())
+        c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    serverIp = server.IP
+
+    if token == "" {
+        log.Printf("Missing authorization header from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
+        return
+    }
+
+    // lookup the user based on token 
+    var discordId string
+    var discordName string
+
+     res,err := ms.db.Query("SELECT discord_id, username FROM discord_auth WHERE token = ?", token)
+
+     if(err != nil){
+        log.Printf("Failed to query token from database: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+     }
+
+     err = res.Scan(&discordId,&discordName)
+
+    if(err != nil) {
+        log.Printf("Failed to get id and name from token")
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    // create a jwt token for the server with the user's discord id, username, and server ip
+
+    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+        "discord_id": discordId,
+        "username":   discordName,
+        "server_ip":  serverIp,
+    }).SignedString([]byte("secret"))
+
+    if err != nil {
+        log.Printf("Failed to create JWT token: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{ "token": serverToken })
+
+} 
+
 func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
     var code,e = c.GetQuery("code")
@@ -735,6 +812,7 @@ func main() {
      r.POST("/discord-auth", ms.HandleDiscordClientAuth)
      r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk)
      r.DELETE("/discord-auth", ms.HandleDiscordDelete)
+     r.POST("/server-token", ms.HandlePerServerToken)
      r.Run(":80")
  }
 
