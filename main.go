@@ -284,7 +284,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
             err = row.Scan(&token)
             if err != nil {
                 log.Printf("Failed to query token from database: %v", err)
-                c.AbortWithStatus(http.StatusInternalServerError)
+                c.JSON(http.StatusInternalServerError, gin.H{ "error": "Please join the R1Delta Discord server." })
                 return
             }
             c.JSON(http.StatusOK, gin.H{ "token": token })
@@ -341,6 +341,30 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
     if err := c.ShouldBindJSON(&payload); err != nil {
         log.Printf("Invalid Discord auth payload from %s: %v", c.ClientIP(), err)
         c.AbortWithStatus(http.StatusBadRequest)
+        return
+    }
+
+    // check the authorization header
+    var msToken string
+    if auth := c.GetHeader("Authorization"); auth != "" {
+        if strings.HasPrefix(auth, "Bearer ") {
+            msToken = strings.TrimPrefix(auth, "Bearer ")
+        } else {
+            log.Printf("Invalid authorization header from %s: %s", c.ClientIP(), auth)
+            c.AbortWithStatus(http.StatusBadRequest)
+            return
+        }
+    }
+
+    if msToken == "" {
+        log.Printf("Missing authorization header from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
+        return
+    }
+
+    if(msToken != os.Getenv("MS_TOKEN")) {
+        log.Printf("Invalid master server token from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
         return
     }
 
