@@ -151,7 +151,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    c.JSON(http.StatusOK, gin.H{ "token": serverToken })
+    c.JSON(http.StatusOK, gin.H{ "token": serverToken, "discord_id": discordId, "username": discordName, "pomelo_name": pomeloName })
 
 } 
 
