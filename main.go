@@ -47,6 +47,7 @@ import (
     DiscordId string `json:"discord_id"`
     Username  string `json:"username"`
     DisplayName string `json:"display_name"`
+    PomeloName string `json:"pomelo_name"`
  }
 
  func isValidMapName(name string) bool {
@@ -402,7 +403,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
 
                 // store the token in the database
                 
-                _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token,display_name) VALUES (?, ?, ?,?)", p.DiscordId, p.Username, token,p.DisplayName)
+                _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token,display_name,pomelo_name) VALUES (?, ?, ?,?,?)", p.DiscordId, p.Username, token,p.DisplayName,p.PomeloName)
                 if err != nil {
                     log.Printf("Failed to store token in database: %v", err)
                     c.AbortWithStatus(http.StatusInternalServerError)
@@ -839,13 +840,8 @@ func main() {
         }
     }
     // create discord auth table primary key discord_id and username and token
-    // statement, err  := db.Prepare("CREATE TABLE IF NOT EXISTS discord_auth (discord_id TEXT PRIMARY KEY, username TEXT, token TEXT)")
-    // if err != nil {
-	// 	log.Println("Error in creating table")
-	// } else {
-	// 	log.Println("Successfully created table")
-	// }
-    // statement.Exec()
+    // add pomelo_name and fields
+   
 
     ms := NewMasterServer()
     ms.db = db
