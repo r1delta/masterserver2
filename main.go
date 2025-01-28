@@ -350,6 +350,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
     if auth := c.GetHeader("Authorization"); auth != "" {
         if strings.HasPrefix(auth, "Bearer ") {
             msToken = strings.TrimPrefix(auth, "Bearer ")
+            log.Println("Master server token received: ", msToken)
         } else {
             log.Printf("Invalid authorization header from %s: %s", c.ClientIP(), auth)
             c.AbortWithStatus(http.StatusBadRequest)
