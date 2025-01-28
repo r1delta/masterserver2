@@ -416,7 +416,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
             }
         } else {
             // update the display name
-            _, err = ms.db.Exec("UPDATE discord_auth SET display_name = ? WHERE discord_id = ?", p.DisplayName, p.DiscordId)
+            _, err = ms.db.Exec("UPDATE discord_auth  SET display_name = ?, pomelo_name = ? WHERE discord_id = ?", p.DisplayName,p.PomeloName, p.DiscordId)
             if err != nil {
                 log.Printf("Failed to update display name in database: %v", err)
                 c.AbortWithStatus(http.StatusInternalServerError)
