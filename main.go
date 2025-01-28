@@ -295,6 +295,46 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{ "token": token })
 }
 
+func (ms *MasterServer) HandleUser(c *gin.Context) {
+    // get the token from the authorization header
+    var token string
+    if auth := c.GetHeader("Authorization"); auth != "" {
+        if strings.HasPrefix(auth, "Bearer ") {
+            token = strings.TrimPrefix(auth, "Bearer ")
+        } else {
+            log.Printf("Invalid authorization header from %s: %s", c.ClientIP(), auth)
+            c.AbortWithStatus(http.StatusBadRequest)
+            return
+        }
+    }
+
+    if token == "" {
+        log.Printf("Missing authorization header from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
+        return
+    }
+
+    // lookup the user based on token
+    var discordId string
+    var discordName string
+    var displayName string
+
+    row := ms.db.QueryRow("SELECT discord_id, username, display_name FROM discord_auth WHERE token = ?", token)
+    err := row.Scan(&discordId, &discordName, &displayName)
+    if err != nil {
+        log.Printf("Failed to query token from database: %v", err)
+        c.AbortWithStatus(http.StatusInternalServerError)
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{ 
+        "discord_id": discordId,
+        "username":   discordName,
+        "display_name": displayName,
+    })
+
+}
+
 func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
     // takes an array of discord ids and usernames and creates tokens if they don't already exist
     var payload []DiscordAuthPayload
@@ -815,6 +855,7 @@ func main() {
      r.POST("/discord-auth", ms.HandleDiscordClientAuth)
      r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk)
      r.DELETE("/discord-auth", ms.HandleDiscordDelete)
+     r.GET("/user", ms.HandleUser)
      r.POST("/server-token", ms.HandlePerServerToken)
      r.Run(":80")
  }
