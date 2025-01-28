@@ -131,7 +131,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
 
     if(err != nil) {
         log.Printf("Failed to get id and name from token")
-        c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": "Invalid token" })
+        c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": err.Error() })
         return
     }
 
