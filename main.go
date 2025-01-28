@@ -119,16 +119,17 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     // lookup the user based on token 
     var discordId string
     var discordName string
+    var pomeloName string
 
-     res,err := ms.db.Query("SELECT discord_id, display_name FROM discord_auth WHERE token = ?", token)
+    res,err := ms.db.Query("SELECT discord_id, display_name,pomelo_name FROM discord_auth WHERE token = ?", token)
 
-     if(err != nil){
+    if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
         c.AbortWithStatus(http.StatusInternalServerError)
         return
-     }
+    }
      res.Next()
-     err = res.Scan(&discordId,&discordName)
+     err = res.Scan(&discordId,&discordName,&pomeloName)
     
     if(err != nil) {
         log.Printf("Failed to get id and name from token")
@@ -139,6 +140,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
         "discord_id": discordId,
         "username":   discordName,
+        "pomelo_name": pomeloName,
         "server_ip":  serverIp,
         "exp":        time.Now().Add(5 * time.Minute).Unix(),
     }).SignedString([]byte(serverIp))
