@@ -119,22 +119,22 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     var discordId string
     var discordName string
 
-     res,err := ms.db.Query("SELECT discord_id, username FROM discord_auth WHERE token = ?", token)
+     res,err := ms.db.Query("SELECT discord_id, display_name FROM discord_auth WHERE token = ?", token)
 
      if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
         c.AbortWithStatus(http.StatusInternalServerError)
         return
      }
-
+     res.Next()
      err = res.Scan(&discordId,&discordName)
-
+    
     if(err != nil) {
         log.Printf("Failed to get id and name from token")
         c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": err.Error() })
         return
     }
-
+    
     serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
         "discord_id": discordId,
         "username":   discordName,
@@ -312,8 +312,6 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
 
     log.Println("Discord auth payload received: ", payload)
 
-    // create a new token object, for the auth token you receive from the auth flow
-    tokens := make(map[string]string)
     for _, p := range payload {
         if p.DiscordId == "" || p.Username == "" {
             log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
@@ -351,12 +349,18 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
                 c.AbortWithStatus(http.StatusInternalServerError)
                 return
             }
+        } else {
+            // update the display name
+            _, err = ms.db.Exec("UPDATE discord_auth SET display_name = ? WHERE discord_id = ?", p.DisplayName, p.DiscordId)
+            if err != nil {
+                log.Printf("Failed to update display name in database: %v", err)
+                c.AbortWithStatus(http.StatusInternalServerError)
+                continue
+            }
         }
-
-        tokens[p.DiscordId] = token
     }
 
-    c.JSON(http.StatusOK, tokens)
+    c.JSON(http.StatusOK, gin.H{ "ok": "ok" })
 }
 
 func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
