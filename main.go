@@ -135,13 +135,12 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    // create a jwt token for the server with the user's discord id, username, and server ip
-
     serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
         "discord_id": discordId,
         "username":   discordName,
         "server_ip":  serverIp,
-    }).SignedString([]byte("secret"))
+        "exp":        time.Now().Add(5 * time.Minute).Unix(),
+    }).SignedString([]byte(serverIp))
 
     if err != nil {
         log.Printf("Failed to create JWT token: %v", err)
