@@ -464,18 +464,41 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
         return
     }
 
-    if payload.DiscordId == "" || payload.Username == "" {
+    if payload.DiscordId == "" {
         log.Printf("Invalid Discord auth payload from %s: missing fields", c.ClientIP())
         c.AbortWithStatus(http.StatusBadRequest)
         return
     }
 
+    var msToken string
+    if auth := c.GetHeader("Authorization"); auth != "" {
+        if strings.HasPrefix(auth, "Bearer ") {
+            msToken = strings.TrimPrefix(auth, "Bearer ")
+            log.Println("Master server token received: ", msToken)
+        } else {
+            log.Printf("Invalid authorization header from %s: %s", c.ClientIP(), auth)
+            c.AbortWithStatus(http.StatusBadRequest)
+            return
+        }
+    }
+
+    if msToken == "" {
+        log.Printf("Missing authorization header from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
+        return
+    }
+
+    if(msToken != os.Getenv("MS_TOKEN")) {
+        log.Printf("Invalid master server token from %s", c.ClientIP())
+        c.AbortWithStatus(http.StatusUnauthorized)
+        return
+    }
    
    log.Println("Discord auth payload received: ", payload)
 
     // store the token in the database
     // res,err = ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
-    s,err := ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
+    s,err := ms.db.Query("SELECT token, FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
     if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
         c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1 Delta discord" })
@@ -489,6 +512,16 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
         return
     }
     log.Println("Token stored in database: ", res)
+
+    // update the display name, pomelo name, and username
+    _, err = ms.db.Exec("UPDATE discord_auth SET display_name = ?, pomelo_name = ?, username = ? WHERE discord_id = ?", payload.DisplayName, payload.PomeloName, payload.Username, payload.DiscordId)
+
+    if err != nil {
+        log.Printf("Failed to update display name in database: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to update display name" })
+        return
+    }
+
     c.JSON(http.StatusOK, gin.H{ "token": res })
  }
 
