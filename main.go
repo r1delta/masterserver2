@@ -139,7 +139,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     
     serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
         "discord_id": discordId,
-        "display_name":   discordName,
+        "display_name": discordName,
         "pomelo_name": pomeloName,
         "exp":        time.Now().Add(5 * time.Minute).Unix(),
     }).SignedString([]byte(serverIp))
@@ -497,7 +497,7 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
 
     // store the token in the database
     // res,err = ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
-    s,err := ms.db.Query("SELECT token, FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
+    s,err := ms.db.Query("SELECT token FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
     if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
 
