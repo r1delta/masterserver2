@@ -139,7 +139,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     
     serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
         "discord_id": discordId,
-        "username":   discordName,
+        "display_name":   discordName,
         "pomelo_name": pomeloName,
         "exp":        time.Now().Add(5 * time.Minute).Unix(),
     }).SignedString([]byte(serverIp))
