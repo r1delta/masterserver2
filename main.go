@@ -141,7 +141,6 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         "discord_id": discordId,
         "username":   discordName,
         "pomelo_name": pomeloName,
-        "server_ip":  serverIp,
         "exp":        time.Now().Add(5 * time.Minute).Unix(),
     }).SignedString([]byte(serverIp))
 
