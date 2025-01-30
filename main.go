@@ -533,7 +533,7 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
 
     if err != nil {
         log.Printf("Failed to update display name in database: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to update display name" })
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to update display name " + err.Error() })
         return
     }
 
