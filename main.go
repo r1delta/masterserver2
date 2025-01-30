@@ -515,6 +515,7 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
         if err != nil {
             log.Printf("Failed to store token in database: %v", err)
             c.AbortWithStatus(http.StatusInternalServerError)
+            return
         }
         return
     }
@@ -532,7 +533,7 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
     _, err = ms.db.Exec("UPDATE discord_auth SET display_name = ?, pomelo_name = ?, username = ? WHERE discord_id = ?", payload.DisplayName, payload.PomeloName, payload.Username, payload.DiscordId)
 
     if err != nil {
-        log.Printf("Failed to update display name in database: %v", err)
+        log.Fatalf("Failed to update display name in database: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to update display name " + err.Error() })
         return
     }
@@ -904,6 +905,7 @@ func main() {
     
     // Configure trusted Cloudflare proxies
     r.SetTrustedProxies(cfIPs)
+    ms.db.Exec("PRAGMA journal_mode = WAL")
 
      // Add Cloudflare IP handling middleware
      r.Use(func(c *gin.Context) {
