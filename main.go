@@ -519,6 +519,7 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
         return
     }
     var res string
+    s.Next()
     err = s.Scan(&res)
     if(err != nil){
         log.Printf("Failed to scan token from database: %v", err)
