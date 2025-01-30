@@ -537,6 +537,8 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
         return
     }
 
+    log.Println("Display name updated in database: ", payload.DisplayName)
+
     c.JSON(http.StatusOK, gin.H{ "token": res })
  }
 
