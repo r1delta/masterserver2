@@ -500,7 +500,22 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
     s,err := ms.db.Query("SELECT token, FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
     if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
-        c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1 Delta discord" })
+
+        // create a token and store it in the database
+        token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+            "discord_id": payload.DiscordId,
+            "username":   payload.Username,
+        }).SignedString([]byte("secret"))
+        if err != nil {
+            log.Printf("Failed to create JWT token: %v", err)
+            c.AbortWithStatus(http.StatusInternalServerError)
+        }
+
+        _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", payload.DiscordId, payload.Username, token)
+        if err != nil {
+            log.Printf("Failed to store token in database: %v", err)
+            c.AbortWithStatus(http.StatusInternalServerError)
+        }
         return
     }
     var res string
