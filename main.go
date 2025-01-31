@@ -132,8 +132,8 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
      err = res.Scan(&discordId,&discordName,&pomeloName)
     
     if(err != nil) {
-        log.Printf("Failed to get id and name from token")
-        c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": err.Error() })
+        log.Println("Failed to get id and name from token" + err.Error())
+        c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": "An error occurred"})
         return
     }
     
