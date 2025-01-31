@@ -121,7 +121,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     var discordName string
     var pomeloName string
 
-    res,err := ms.db.Query("SELECT discord_id, display_name,pomelo_name FROM discord_auth WHERE token = ?", token)
+    res,err := ms.db.Query("SELECT discord_id, pomelo_name,username FROM discord_auth WHERE token = ?", token)
 
     if(err != nil){
         log.Printf("Failed to query token from database: %v", err)
