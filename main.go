@@ -210,6 +210,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     }
     if resp.StatusCode != http.StatusOK {
         log.Printf("Unexpected status code: %d", resp.StatusCode)
+        log.Println(body)
         c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to exchange code for token" })
         return
     }
