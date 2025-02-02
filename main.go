@@ -205,13 +205,13 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
     if err != nil {
         log.Printf("Failed to exchange code for token: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to exchange code for token "  + err.Error()})
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Error"})
         return
     }
     if resp.StatusCode != http.StatusOK {
         log.Printf("Unexpected status code: %d", resp.StatusCode)
         log.Println(body)
-        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to exchange code for token" })
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Error" })
         return
     }
 
