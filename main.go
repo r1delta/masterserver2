@@ -160,7 +160,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     if e != true {
         log.Println("Discord auth code not found", code)
         log.Printf("Invalid Discord auth code from %s: missing fields", c.ClientIP())
-        c.AbortWithStatus(http.StatusBadRequest)
+        c.JSON(http.StatusBadRequest, gin.H{ "error": "Invalid Discord auth code" })
         return
     }
     
@@ -191,7 +191,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
    
     if err != nil {
         log.Printf("Failed to create request: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to create request" })
         return
     }
     req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -205,12 +205,12 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
     if err != nil {
         log.Printf("Failed to exchange code for token: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to exchange code for token" })
         return
     }
     if resp.StatusCode != http.StatusOK {
         log.Printf("Unexpected status code: %d", resp.StatusCode)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to exchange code for token" })
         return
     }
 
@@ -224,7 +224,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
     if err := json.Unmarshal(body,&tokenResponse); err != nil {
         log.Printf("Failed to decode token response: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to decode token response" })
         return
     }
 
@@ -232,7 +232,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     req, err = http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
     if err != nil {
         log.Printf("Failed to create request: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to decode token response" })
         return
     }
 
@@ -241,15 +241,15 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     resp, err = http.DefaultClient.Do(req)
     if err != nil {
         log.Printf("Failed to get user info: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to decode token response" })
         return
     }
 
     defer resp.Body.Close()
 
     if resp.StatusCode != http.StatusOK {
-        log.Printf("Unexpected status code: %d", resp.StatusCode)
-        c.AbortWithStatus(http.StatusInternalServerError)
+        log.Printf("Unexpected status code: %d", resp.StatusCode,)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed" })
         return
     }
 
