@@ -241,6 +241,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     resp, err = http.DefaultClient.Do(req)
     if err != nil {
         log.Printf("Failed to get user info: %v", err)
+        log.Println(err)
         c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed to decode token response" })
         return
     }
@@ -248,7 +249,8 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
     defer resp.Body.Close()
 
     if resp.StatusCode != http.StatusOK {
-        log.Printf("Unexpected status code: %d", resp.StatusCode,)
+        log.Printf("Unexpected status code: %d", resp.StatusCode)        
+        log.Println(err)
         c.JSON(http.StatusInternalServerError, gin.H{ "error": "Failed" })
         return
     }
