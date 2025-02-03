@@ -267,16 +267,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
         return
     }
 
-    // create a new token object, for the auth token you receive from the auth flow
-    token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "discord_id": userResponse.ID,
-        "username":   userResponse.Username,
-    }).SignedString([]byte("secret"))
-    if err != nil {
-        log.Printf("Failed to create JWT token: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
-    }
 
     // check if token already exists
     var existingToken string
@@ -305,7 +295,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
     // store the token in the database
     // _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", userResponse.ID, userResponse.Username, token)
-    c.JSON(http.StatusOK, gin.H{ "token": token })
+    c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1Delta Discord server." })
     return
 }
 
