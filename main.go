@@ -278,12 +278,18 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
         return
     }
 
-    // store the token in the database
-    _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", userResponse.ID, userResponse.Username, token)
-    if err != nil {
-        log.Printf("Failed to store token in database: %v", err)
-        // check if contains unique constraint error
-        if(err.Error() == "UNIQUE constraint failed: discord_auth.discord_id") {
+    // check if token already exists
+    var existingToken string
+    err = ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID).Scan(&existingToken)
+    if err == nil {
+        c.JSON(http.StatusOK, gin.H{ "token": existingToken })
+        return
+    } else {
+        if err != sql.ErrNoRows {
+            log.Printf("Failed to query token from database: %v", err)
+            c.JSON(http.StatusUnauthorized, gin.H{ "error": "Please join the R1Delta Discord server." })
+            return
+        } else if(err.Error() == "UNIQUE constraint failed: discord_auth.discord_id") {
             var token string
             row := ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID)
             err = row.Scan(&token)
@@ -293,11 +299,14 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
                 return
             }
             c.JSON(http.StatusOK, gin.H{ "token": token })
+            return
         }
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
     }
+
+    // store the token in the database
+    // _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token) VALUES (?, ?, ?)", userResponse.ID, userResponse.Username, token)
     c.JSON(http.StatusOK, gin.H{ "token": token })
+    return
 }
 
 func (ms *MasterServer) HandleUser(c *gin.Context) {
