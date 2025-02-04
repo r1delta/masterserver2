@@ -633,7 +633,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	}
 
 	// Determine the IP of the connecting server.
-	clientIP := c.Request.RemoteAddr
+	clientIP := c.ClientIP()
 	ip, _, err := net.SplitHostPort(clientIP)
 	if err != nil {
 		ip = clientIP
@@ -860,7 +860,7 @@ func getPublicIP() (string, error) {
 // HandleDelete removes a server entry based on its port.
 func (ms *MasterServer) HandleDelete(c *gin.Context) {
 	port := c.Param("port")
-	clientIP := c.Request.RemoteAddr
+	clientIP := c.ClientIP()
 	ip, _, err := net.SplitHostPort(clientIP)
 	if err != nil {
 		ip = clientIP
