@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -90,8 +91,6 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         }
     }
 
-    var serverIp string
-
     // get the server ip from the json body
     var server struct {
         IP string `json:"ip"`
@@ -108,7 +107,6 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    serverIp = server.IP
 
     if token == "" {
         log.Printf("Missing authorization header from %s", c.ClientIP())
@@ -136,13 +134,25 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{ "error": "An error occurred"})
         return
     }
+
+    keyData, err := ioutil.ReadFile("private_512.key")
+    if err != nil {
+        log.Fatalf("Error reading private key file: %v", err)
+    }
+
+    // Parse the RSA private key
+    privateKey, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
+    if err != nil {
+        log.Fatalf("Error parsing RSA private key: %v", err)
+    }
     
-    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
         "discord_id": discordId,
         "display_name": discordName,
         "pomelo_name": pomeloName,
+        "server_ip": server.IP,
         "exp":        time.Now().Add(5 * time.Minute).Unix(),
-    }).SignedString([]byte(serverIp))
+    }).SignedString(privateKey)
 
     if err != nil {
         log.Printf("Failed to create JWT token: %v", err)
