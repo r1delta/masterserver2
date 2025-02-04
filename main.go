@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -135,7 +134,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    keyData, err := ioutil.ReadFile("private_512.key")
+    keyData, err := os.ReadFile("rsa_256.key")
     if err != nil {
         log.Fatalf("Error reading private key file: %v", err)
     }
