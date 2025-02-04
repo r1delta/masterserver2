@@ -217,12 +217,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
         c.JSON(http.StatusInternalServerError, gin.H{ "error": "Error"})
         return
     }
-    if resp.StatusCode != http.StatusOK {
-        log.Printf("Unexpected status code: %d", resp.StatusCode)
-        log.Println(body)
-        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Error" })
-        return
-    }
 
     var tokenResponse struct {
         TokenType string `json:"token_type"`
@@ -230,7 +224,18 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
         ExpiresIn int `json:"expires_in"`
         RefreshToken string `json:"refresh_token"`
         Scope string `json:"scope"`
+        Error string `json:"error"`
     }
+
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Unexpected status code: %d", resp.StatusCode)
+        json.Unmarshal(body,&tokenResponse);
+        log.Println(tokenResponse)
+        c.JSON(http.StatusInternalServerError, gin.H{ "error": "Error" })
+        return
+    }
+
+ 
 
     if err := json.Unmarshal(body,&tokenResponse); err != nil {
         log.Printf("Failed to decode token response: %v", err)
