@@ -145,7 +145,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         log.Fatalf("Error parsing RSA private key: %v", err)
     }
     
-    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodES512, jwt.MapClaims{
         "discord_id": discordId,
         "display_name": discordName,
         "pomelo_name": pomeloName,
