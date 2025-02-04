@@ -140,7 +140,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
     }
 
     // Parse the RSA private key
-    privateKey, err := jwt.ParseECPrivateKeyFromPEM(keyData)
+    privateKey, err := jwt.ParseEdPrivateKeyFromPEM(keyData)
     if err != nil {
         log.Fatalf("Error parsing RSA private key: %v", err)
     }
