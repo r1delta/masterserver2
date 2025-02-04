@@ -134,18 +134,18 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    keyData, err := os.ReadFile("rsa_256.key")
+    keyData, err := os.ReadFile("private.pem")
     if err != nil {
         log.Fatalf("Error reading private key file: %v", err)
     }
 
     // Parse the RSA private key
-    privateKey, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
+    privateKey, err := jwt.ParseECPrivateKeyFromPEM(keyData)
     if err != nil {
         log.Fatalf("Error parsing RSA private key: %v", err)
     }
     
-    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
+    serverToken, err := jwt.NewWithClaims(jwt.SigningMethodES512, jwt.MapClaims{
         "discord_id": discordId,
         "display_name": discordName,
         "pomelo_name": pomeloName,
