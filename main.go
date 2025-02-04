@@ -134,7 +134,7 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
         return
     }
 
-    keyData, err := os.ReadFile("ec512_private.pem")
+    keyData, err := os.ReadFile("new_key.pem")
     if err != nil {
         log.Fatalf("Error reading private key file: %v", err)
     }
