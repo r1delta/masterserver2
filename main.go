@@ -923,21 +923,18 @@ func main() {
 
 	// Start the cleanup goroutine.
 	go ms.CleanupOldEntries()
-
+	gin.SetMode(gin.ReleaseMode)
 	// Set up Gin.
 	r := gin.Default()
+
+        r.RemoteIPHeaders = []string{"CF-Connecting-IP"}
 	// Configure trusted proxies.
 	if err := r.SetTrustedProxies(cfIPs); err != nil {
-		log.Fatalf("Failed to set trusted proxies: %v", err)
+	    log.Fatalf("Failed to set trusted proxies: %v", err)
 	}
-	// Middleware to override RemoteAddr with CF-Connecting-IP if present.
-	r.Use(func(c *gin.Context) {
-		if cfIP := c.GetHeader("CF-Connecting-IP"); cfIP != "" {
-			c.Request.RemoteAddr = cfIP
-		}
-		c.Next()
-	})
-	// Apply per-IP rate limiting.
+
+
+
 	r.Use(ms.rateLimitMiddleware())
 
 	// Set up routes.
