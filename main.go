@@ -898,6 +898,16 @@ func main() {
 	}
 	defer db.Close()
 
+	db.Exec(`CREATE TABLE IF NOT EXISTS discord_auth (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_id TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    pomelo_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`)
+
 	// Set WAL mode.
 	_, err = db.Exec("PRAGMA journal_mode = WAL")
 	if err != nil {
