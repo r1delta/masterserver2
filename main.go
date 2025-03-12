@@ -947,7 +947,7 @@ func main() {
 	r.DELETE("/discord-auth", ms.HandleDiscordDelete)
 	r.GET("/user", ms.HandleUser)
 	r.POST("/server-token", ms.HandlePerServerToken)
-
+	r.StaticFS("/", http.Dir("public"))
 	// Start server on port 80.
 	if err := r.Run(":80"); err != nil {
 		log.Fatalf("Failed to run server: %v", err)
