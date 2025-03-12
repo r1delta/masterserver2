@@ -927,7 +927,7 @@ func main() {
 	// Set up Gin.
 	r := gin.Default()
 
-        r.RemoteIPHeaders = []string{"CF-Connecting-IP"}
+    r.RemoteIPHeaders = []string{"CF-Connecting-IP"}
 	// Configure trusted proxies.
 	if err := r.SetTrustedProxies(cfIPs); err != nil {
 	    log.Fatalf("Failed to set trusted proxies: %v", err)
@@ -947,7 +947,7 @@ func main() {
 	r.DELETE("/discord-auth", ms.HandleDiscordDelete)
 	r.GET("/user", ms.HandleUser)
 	r.POST("/server-token", ms.HandlePerServerToken)
-	r.Static("/", "public")
+	r.Static("/files", "public")
 	// Start server on port 80.
 	if err := r.Run(":80"); err != nil {
 		log.Fatalf("Failed to run server: %v", err)
