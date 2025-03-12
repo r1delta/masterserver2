@@ -909,10 +909,10 @@ func main() {
 );`)
 
 	// Set WAL mode.
-	_, err = db.Exec("PRAGMA journal_mode = WAL")
-	if err != nil {
-		log.Fatalf("Failed to set WAL mode: %v", err)
-	}
+	// _, err = db.Exec("PRAGMA journal_mode = WAL")
+	// if err != nil {
+		// log.Fatalf("Failed to set WAL mode: %v", err)
+	// }
 
 	// Fetch Cloudflare IP ranges.
 	cfIPs, err := fetchCloudflareIPs()
