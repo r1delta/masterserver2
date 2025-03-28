@@ -289,6 +289,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	var userResponse struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
+		
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&userResponse); err != nil {
 		log.Printf("Failed to decode user response: %v", err)
@@ -300,7 +301,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	var existingToken string
 	err = ms.db.QueryRow("SELECT token FROM discord_auth WHERE discord_id = ?", userResponse.ID).Scan(&existingToken)
 	if err == nil {
-		c.JSON(http.StatusOK, gin.H{"token": existingToken})
+		c.JSON(http.StatusOK, gin.H{"token": existingToken,"access_token": tokenResponse.AccessToken})
 		return
 	} else if err != sql.ErrNoRows {
 		log.Printf("Database error when querying discord_auth: %v", err)
