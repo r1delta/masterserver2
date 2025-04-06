@@ -693,7 +693,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		ms.challenges[key] = time.Now()
 		ms.challengeMu.Unlock()
 	} else {
-		entry.Validated = true
+		entry.Validated = false
 	}
 
 	ms.servers[key] = entry
@@ -703,14 +703,6 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 // PerformValidation sends a UDP challenge to the server and marks it validated on success.
 func (ms *MasterServer) PerformValidation(ip string, port int) {
 	log.Printf("[Validation] Starting validation for %s:%d", ip, port)
-
-	ms.serversMu.Lock()
-	defer ms.serversMu.Unlock()
-	key := fmt.Sprintf("%s:%d", ip, port)
-	if server, exists := ms.servers[key]; exists {
-		log.Printf("[Validation] Setting to false to start %s:%d (%s)", ip, port, server.HostName)
-		server.Validated = false
-	}
 	nonce := make([]byte, 4)
 	if _, err := rand.Read(nonce); err != nil {
 		log.Printf("[Validation] Failed to generate nonce for %s:%d: %v", ip, port, err)
@@ -761,6 +753,8 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 	// Mark the server as validated.
 	ms.serversMu.Lock()
 	defer ms.serversMu.Unlock()
+	key := fmt.Sprintf("%s:%d", ip, port)
+
 	if server, exists := ms.servers[key]; exists {
 		log.Printf("[Validation] Successfully validated %s:%d (%s)", ip, port, server.HostName)
 		server.Validated = true
