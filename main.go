@@ -693,7 +693,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		ms.challenges[key] = time.Now()
 		ms.challengeMu.Unlock()
 	} else {
-		entry.Validated = false
+		entry.Validated = true
 	}
 
 	ms.servers[key] = entry
