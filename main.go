@@ -761,7 +761,6 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 	// Mark the server as validated.
 	ms.serversMu.Lock()
 	defer ms.serversMu.Unlock()
-	key := fmt.Sprintf("%s:%d", ip, port)
 	if server, exists := ms.servers[key]; exists {
 		log.Printf("[Validation] Successfully validated %s:%d (%s)", ip, port, server.HostName)
 		server.Validated = true
