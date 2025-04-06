@@ -706,7 +706,9 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 
 	ms.serversMu.Lock()
 	defer ms.serversMu.Unlock()
-	if server, exists := ms.servers[fmt.Sprintf("%s:%d", ip, port)]; exists {
+	key := fmt.Sprintf("%s:%d", ip, port)
+	if server, exists := ms.servers[key]; exists {
+		log.Printf("[Validation] Setting to false to start %s:%d (%s)", ip, port, server.HostName)
 		server.Validated = false
 	}
 	nonce := make([]byte, 4)
