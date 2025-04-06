@@ -703,6 +703,12 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 // PerformValidation sends a UDP challenge to the server and marks it validated on success.
 func (ms *MasterServer) PerformValidation(ip string, port int) {
 	log.Printf("[Validation] Starting validation for %s:%d", ip, port)
+
+	ms.serversMu.Lock()
+	defer ms.serversMu.Unlock()
+	if server, exists := ms.servers[fmt.Sprintf("%s:%d", ip, port)]; exists {
+		server.Validated = false
+	}
 	nonce := make([]byte, 4)
 	if _, err := rand.Read(nonce); err != nil {
 		log.Printf("[Validation] Failed to generate nonce for %s:%d: %v", ip, port, err)
