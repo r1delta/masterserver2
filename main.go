@@ -657,10 +657,14 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	ms.serversMu.Lock()
 	defer ms.serversMu.Unlock()
 
+	// Retrieve existing server entry if it exists to preserve validation status.
+	existingEntry, serverExists := ms.servers[key]
+
 	// Limit maximum servers per IP to 5.
-	if _, exists := ms.servers[key]; !exists {
+	if !serverExists {
 		count := 0
 		for _, s := range ms.servers {
+			// Only count servers from the same IP.
 			if s.IP == ip {
 				count++
 			}
@@ -683,23 +687,28 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		Port:        heartbeat.Port,
 		Players:     heartbeat.Players,
 		LastUpdated: time.Now(),
-		Validated:   false,
+		// Preserve existing validation status if server already exists, otherwise default to false.
+		Validated:   serverExists && existingEntry.Validated,
 	}
 
-	// Check last heartbeat and challenge times.
+	// Check last heartbeat and challenge times to decide if validation is needed.
 	prevHeartbeat, heartbeatExists := ms.lastHeartbeats[key]
 	_, challengeExists := ms.challenges[key]
-	ms.lastHeartbeats[key] = time.Now()
+	ms.lastHeartbeats[key] = time.Now() // Update heartbeat time regardless
+
+	// Trigger validation if it's the first heartbeat, or if the last heartbeat was too long ago.
 	if !challengeExists || (heartbeatExists && time.Since(prevHeartbeat) > 30*time.Second) {
+		// Mark as not validated *before* starting the check.
+		entry.Validated = false
 		go ms.PerformValidation(ip, heartbeat.Port)
 		ms.challengeMu.Lock()
-		ms.challenges[key] = time.Now()
+		ms.challenges[key] = time.Now() // Record the time the challenge was initiated
 		ms.challengeMu.Unlock()
-	} else {
-		entry.Validated = true
 	}
+	// Removed the incorrect 'else { entry.Validated = true }' block.
+	// Validation status is now only set explicitly by PerformValidation or preserved from the existing entry.
 
-	ms.servers[key] = entry
+	ms.servers[key] = entry // Update or add the server entry in the map.
 	c.Status(http.StatusOK)
 }
 
