@@ -31,6 +31,7 @@ type ServerEntry struct {
 	MapName     string       `json:"map_name"`
 	GameMode    string       `json:"game_mode"`
 	MaxPlayers  int          `json:"max_players"`
+	HasPassword bool         `json:"has_password"`
 	IP          string       `json:"ip"`
 	Port        int          `json:"port"`
 	Players     []PlayerInfo `json:"players"`
@@ -561,6 +562,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		GameMode   string       `json:"game_mode"`
 		MaxPlayers int          `json:"max_players"`
 		Port       int          `json:"port"`
+		HasPassword bool        `json:"has_password"`
 		Players    []PlayerInfo `json:"players"`
 	}
 	if err := c.ShouldBindJSON(&heartbeat); err != nil {
@@ -676,6 +678,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		MapName:     heartbeat.MapName,
 		GameMode:    heartbeat.GameMode,
 		MaxPlayers:  heartbeat.MaxPlayers,
+		HasPassword: heartbeat.HasPassword,
 		IP:          ip,
 		Port:        heartbeat.Port,
 		Players:     heartbeat.Players,
