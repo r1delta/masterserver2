@@ -599,7 +599,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	heartbeat.HostName = hostname
 
 	// Validate map name.
-	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName) {
+	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName) || strings.Contains(heartbeat.MapName, "mp_npe") {
 		log.Printf("Invalid map name %q from %s", heartbeat.MapName, c.ClientIP())
 		c.String(http.StatusBadRequest, "Invalid map name format (lowercase letters, numbers, underscores only)")
 		c.Abort()
@@ -621,6 +621,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		c.Abort()
 		return
 	}
+	
 	if len(heartbeat.Players) > heartbeat.MaxPlayers {
 	    log.Printf("Too many players (%d) vs max players (%d) from %s", len(heartbeat.Players), heartbeat.MaxPlayers, c.ClientIP())
 	    c.String(http.StatusBadRequest, "Player count exceeds max players")
