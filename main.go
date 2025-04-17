@@ -597,7 +597,10 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	    hostname = "Unnamed R1Delta Server"
 	}
 	heartbeat.HostName = hostname
-
+	if(strings.Contains(heartbeat.MapName, "mp_npe")) {
+		c.Status(http.StatusOK)
+		return 
+	}
 	// Validate map name.
 	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName)  {
 		log.Printf("Invalid map name %q from %s", heartbeat.MapName, c.ClientIP())
@@ -711,10 +714,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	}
 	// Removed the incorrect 'else { entry.Validated = true }' block.
 	// Validation status is now only set explicitly by PerformValidation or preserved from the existing entry.
-	if(strings.Contains(heartbeat.MapName, "mp_npe")) {
-		c.Status(http.StatusOK)
-		return 
-	}
+	
 	ms.servers[key] = entry // Update or add the server entry in the map.
 	c.Status(http.StatusOK)
 }
