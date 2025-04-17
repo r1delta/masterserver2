@@ -699,23 +699,15 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	}
 
 	// Check last heartbeat and challenge times to decide if validation is needed.
-	prevHeartbeat, heartbeatExists := ms.lastHeartbeats[key]
-	_, challengeExists := ms.challenges[key]
+//	prevHeartbeat, heartbeatExists := ms.lastHeartbeats[key]
+	//_, challengeExists := ms.challenges[key]
 	ms.lastHeartbeats[key] = time.Now() // Update heartbeat time regardless
 
-	// Trigger validation if it's the first heartbeat, or if the last heartbeat was too long ago.
-	if !challengeExists || (heartbeatExists && time.Since(prevHeartbeat) > 30*time.Second) {
-		// Mark as not validated *before* starting the check.
-		entry.Validated = false
 		go ms.PerformValidation(ip, heartbeat.Port)
 		ms.challengeMu.Lock()
 		ms.challenges[key] = time.Now() // Record the time the challenge was initiated
 		ms.challengeMu.Unlock()
-	}
-	// Removed the incorrect 'else { entry.Validated = true }' block.
-	// Validation status is now only set explicitly by PerformValidation or preserved from the existing entry.
-	
-	ms.servers[key] = entry // Update or add the server entry in the map.
+		ms.servers[key] = entry // Update or add the server entry in the map.
 	c.Status(http.StatusOK)
 }
 
@@ -902,6 +894,19 @@ func NewMasterServer() *MasterServer {
 		limiters:       make(map[string]*rate.Limiter),
 	}
 }
+func LogRequestMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        log.Printf("DEBUG: Received request: Method=%s Path=%s RemoteAddr=%s CF-Connecting-IP=%s CF-Ray=%s",
+            c.Request.Method,
+            c.Request.URL.Path,
+            c.Request.RemoteAddr, // IP Go sees directly (Cloudflare edge)
+            c.GetHeader("CF-Connecting-IP"), // Real client IP via header
+            c.GetHeader("CF-Ray"),           // Cloudflare Ray ID
+        )
+        c.Next() // Continue processing
+    }
+}
+
 
 func main() {
 	// Load environment variables.
@@ -957,7 +962,12 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	// Set up Gin.
 	r := gin.Default()
+r.Use(func(c *gin.Context) {
+    log.Printf("GIN ENTRY: Request from %s for %s %s", c.Request.RemoteAddr, c.Request.Method, c.Request.URL.Path)
+    c.Next()
+})
 
+    r.Use(LogRequestMiddleware())
     r.RemoteIPHeaders = []string{"CF-Connecting-IP"}
 	// Configure trusted proxies.
 	if err := r.SetTrustedProxies(cfIPs); err != nil {
