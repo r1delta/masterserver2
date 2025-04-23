@@ -35,6 +35,7 @@ type ServerEntry struct {
 	Playlist    string       `json:"playlist"`
 	PlaylistDisplayName string `json:"playlist_display_name"`
 	HasPassword bool         `json:"has_password"`
+	TotalPlayers int         `json:"total_players"`
 	IP          string       `json:"ip"`
 	Port        int          `json:"port"`
 	Players     []PlayerInfo `json:"players"`
@@ -695,6 +696,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		HasPassword: heartbeat.HasPassword,
 		Description: heartbeat.Description,
 		Playlist:   heartbeat.Playlist,
+		TotalPlayers: len(heartbeat.Players),
 		PlaylistDisplayName: heartbeat.PlaylistDisplayName,
 		IP:          ip,
 		Port:        heartbeat.Port,
