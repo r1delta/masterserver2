@@ -817,7 +817,10 @@ func (ms *MasterServer) GetServers(c *gin.Context) {
 		}
 	}
 	// combine the valid servers with an object for playerCount
-	c.JSON(http.StatusOK, validServers)
+	c.JSON(http.StatusOK, gin.H{
+		"servers":      validServers,
+		"player_count": playerCount,
+	})
 }
 
 // CleanupOldEntries periodically removes stale server entries.
