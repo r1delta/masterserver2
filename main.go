@@ -813,14 +813,24 @@ func (ms *MasterServer) GetServers(c *gin.Context) {
 	for _, s := range ms.servers {
 		if s.Validated && time.Since(s.LastUpdated) < 30*time.Second {
 			validServers = append(validServers, s)
+		}
+	}
+	// combine the valid servers with an object for playerCount
+	c.JSON(http.StatusOK, validServers)
+}
+
+
+func (ms *MasterServer) GetPlayerCount(c *gin.Context) {
+	ms.serversMu.RLock()
+	defer ms.serversMu.RUnlock()
+	var playerCount = 0
+	for _, s := range ms.servers {
+		if s.Validated && time.Since(s.LastUpdated) < 30*time.Second {
 			playerCount += s.TotalPlayers
 		}
 	}
 	// combine the valid servers with an object for playerCount
-	c.JSON(http.StatusOK, gin.H{
-		"servers":      validServers,
-		"player_count": playerCount,
-	})
+	c.JSON(http.StatusOK,playerCount )
 }
 
 // CleanupOldEntries periodically removes stale server entries.
@@ -996,6 +1006,7 @@ r.Use(func(c *gin.Context) {
 	r.POST("/heartbeat", ms.HandleHeartbeat)
 	r.DELETE("/heartbeat/:port", ms.HandleDelete)
 	r.GET("/servers", ms.GetServers)
+	r.GET("/players",ms.GetPlayerCount)
 	r.GET("/discord-auth", ms.HandleDiscordAuth)
 	r.POST("/discord-auth", ms.HandleDiscordClientAuth)
 	r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk)
