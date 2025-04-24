@@ -809,11 +809,14 @@ func (ms *MasterServer) GetServers(c *gin.Context) {
 	ms.serversMu.RLock()
 	defer ms.serversMu.RUnlock()
 	validServers := make([]*ServerEntry, 0)
+	var playerCount = 0
 	for _, s := range ms.servers {
 		if s.Validated && time.Since(s.LastUpdated) < 30*time.Second {
 			validServers = append(validServers, s)
+			playerCount += s.TotalPlayers
 		}
 	}
+	// combine the valid servers with an object for playerCount
 	c.JSON(http.StatusOK, validServers)
 }
 
