@@ -37,6 +37,7 @@ type ServerEntry struct {
 	HasPassword bool         `json:"has_password"`
 	TotalPlayers int         `json:"total_players"`
 	IP          string       `json:"ip"`
+	Version     string       `json:"version"`
 	Port        int          `json:"port"`
 	Players     []PlayerInfo `json:"players"`
 	LastUpdated time.Time    `json:"-"`
@@ -565,8 +566,9 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		MapName    string       `json:"map_name"`
 		GameMode   string       `json:"game_mode"`
 		MaxPlayers int          `json:"max_players"`
+		Version    string 	    `json:"version"`
 		Description string      `json:"description"`
-		Playlist   string      `json:"playlist"`
+		Playlist   string       `json:"playlist"`
 		PlaylistDisplayName string `json:"playlist_display_name"`
 		Port       int          `json:"port"`
 		HasPassword bool        `json:"has_password"`
@@ -697,6 +699,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		Description: heartbeat.Description,
 		Playlist:   heartbeat.Playlist,
 		TotalPlayers: len(heartbeat.Players),
+		Version:     heartbeat.Version,
 		PlaylistDisplayName: heartbeat.PlaylistDisplayName,
 		IP:          ip,
 		Port:        heartbeat.Port,
