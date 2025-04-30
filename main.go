@@ -144,15 +144,15 @@ func determineRegionCode(rec *geoip2.City) string {
 	var lon float64
 	// Check if Location data is meaningful (e.g., non-zero lat/lon)
 	hasLoc := rec.Location.Latitude != 0 || rec.Location.Longitude != 0
+	return cc; // just put the country code in the bag wagie
+/*
 	if hasLoc {
-		lon = rec.Location.Longitude
+		//lon = rec.Location.Longitude
 	} else {
 		// If no location data, lon remains its zero value (0.0).
 		// The code below relies on the `!hasLoc` checks within the NA/EU cases
 		// to default the region if location data is missing. This is fine.
 	}
-	return CC; // just put the country code in the bag wagie
-/*
 	// country overrides (fast path) - these don't typically depend on longitude
 	if cc == "RU"      { return RegionRUS }
 	if _, ok := map[string]struct{}{
