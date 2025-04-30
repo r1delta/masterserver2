@@ -1512,11 +1512,6 @@ func main() {
     if os.Getenv("JWT_DISCORD_SECRET") == "" {
         log.Fatalf("JWT_DISCORD_SECRET environment variable not set! This secret is required for signing permanent user tokens.")
     }
-    if os.Getenv("JWT_PRIVATE_KEY_FILE") == "" {
-         log.Fatalf("JWT_PRIVATE_KEY_FILE environment variable not set! This file path is required for loading the key to sign server tokens.")
-    } else if _, err := os.Stat(os.Getenv("JWT_PRIVATE_KEY_FILE")); os.IsNotExist(err) {
-         log.Fatalf("JWT_PRIVATE_KEY_FILE %q not found!", os.Getenv("JWT_PRIVATE_KEY_FILE"))
-    }
      if os.Getenv("CLIENT_ID") == "" || os.Getenv("CLIENT_SECRET") == "" || os.Getenv("REDIRECT_URI") == "" {
          log.Fatalf("Discord OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) not set! These are required for the client OAuth flow.")
      }
