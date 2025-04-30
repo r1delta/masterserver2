@@ -939,13 +939,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-	// Sanitize hostname
-	hostname := heartbeat.HostName
-	if len(hostname) > 64 {
-	    hostname = hostname[:64]
-	}
-	
-	// ---------- REGION-PREFIX LOGIC ----------
+    // ---------- REGION-PREFIX & SANITIZATION LOGIC ----------
 	var regionCode string
 	// Parse the IP and check for errors
 	parsedIP := net.ParseIP(ip)
@@ -967,33 +961,40 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
         // Logged at startup if failed. Just assign UNK.
         regionCode = RegionUNK
     }
-	// strip any old [[XXXXX]] prefix then prepend new one
+
+	// Strip any old [[XXXXX]] prefix from the *original* hostname
 	cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
 	cleanName = strings.TrimSpace(cleanName)
-	// Ensure there's a space between region code and name only if there's a name
-	if cleanName == "" {
-		heartbeat.HostName = regionCode // Just the region code if no original name
-	} else {
-		heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, cleanName)
-	}
-	// ---------- END REGION-PREFIX LOGIC ----------
-	
-	// Replace any potentially problematic characters
-	hostname = strings.Map(func(r rune) rune {
-	    // Keep letters, numbers, spaces, and some common punctuation. Remove others.
-        // Added ' ' back, removed square brackets as they are used for region.
-	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_[]", r) {
+
+    // Sanitize the clean name. This ensures the sanitization rules
+    // don't accidentally break the region prefix format itself.
+    sanitizedCleanName := strings.Map(func(r rune) rune {
+        // Keep letters, numbers, spaces, and some common punctuation. Remove others.
+        // Allow spaces. Note: Brackets '[' and ']' are deliberately excluded here
+        // as they are used for the region prefix format and should not appear in the name part.
+	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_:", r) {
             return r
         }
 	    return '_' // Replace disallowed characters with underscore
-	}, cleanName)
-	// Trim leading/trailing underscores or spaces that might result from sanitization
-    hostname = strings.Trim(hostname, "_ ")
+	}, cleanName) // Apply map to the cleanName
 
-	if len(hostname) < 3 { // After sanitization
-	    hostname = "Unnamed R1Delta Server"
+    // Trim leading/trailing underscores or spaces that might result from sanitization
+    sanitizedCleanName = strings.Trim(sanitizedCleanName, "_ ")
+
+	// If the sanitized clean name is empty or too short, use a default *clean* name.
+	if len(sanitizedCleanName) < 3 { // Minimum length for the name part after region code
+	    sanitizedCleanName = "Unnamed R1Delta Server" // Default clean name
 	}
-	heartbeat.HostName = hostname
+
+    // Construct the final hostname by prepending the region code to the sanitized clean name.
+    // The prefix is formatted as [[CODE]], e.g., [[US-EAST]]
+    heartbeat.HostName = fmt.Sprintf("[[%s]] %s", regionCode, sanitizedCleanName) // Correctly format and assign
+
+	// Limit total hostname length after prefixing
+	if len(heartbeat.HostName) > 64 {
+	    heartbeat.HostName = heartbeat.HostName[:64]
+	}
+	// ---------- END REGION-PREFIX & SANITIZATION LOGIC ----------
 
 
 	// Disallow specific map names if needed
@@ -1019,7 +1020,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-    // Validate max players. <-- Added back
+    // Validate max players.
  	if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers > 128 { // Assuming reasonable max players, e.g., up to 128
  		log.Printf("Invalid max players %d from %s:%d", heartbeat.MaxPlayers, ip, heartbeat.Port)
  		c.String(http.StatusBadRequest, "Invalid max players (must be 2-128)") // Adjust range as needed
@@ -1027,17 +1028,13 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
  		return
  	}
 
-    // Validate player count doesn't exceed max players. <-- Added back
-    // Note: It's TotalPlayers that matters for the list, derived from len(Players).
-    // The validation should use len(heartbeat.Players).
+    // Validate player count doesn't exceed max players.
  	if len(heartbeat.Players) > heartbeat.MaxPlayers {
  	    log.Printf("Too many players (%d) vs max players (%d) from %s:%d", len(heartbeat.Players), heartbeat.MaxPlayers, ip, heartbeat.Port)
  	    c.String(http.StatusBadRequest, "Player count exceeds max players")
  	    c.Abort()
  	    return
  	}
-
-
 
 
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port) // Key is IP:Port
@@ -1067,7 +1064,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 
     // Create or update the server entry
 	entry := &ServerEntry{
-		HostName:    heartbeat.HostName,
+		HostName:    heartbeat.HostName, // This now holds the correctly prefixed and sanitized name
 		MapName:     heartbeat.MapName,
 		GameMode:    heartbeat.GameMode,
 		MaxPlayers:  heartbeat.MaxPlayers,
@@ -1106,10 +1103,10 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
     // 1. Server is new (not in map before this heartbeat).
     // 2. Server exists but is not currently validated.
     // 3. Server exists, is validated, but it's been a while since the last challenge attempt.
+    //    This check ensures we periodically re-validate even validated servers, but not too often.
     needsChallenge := !serverExists ||
                       !entry.Validated ||
-                      (entry.Validated && !challengeAttemptedRecently) || // Challenge if validated but no challenge record? (Shouldn't happen if challengeAttemptedRecently is true whenever a challenge is initiated)
-                      (entry.Validated && challengeAttemptedRecently && time.Since(lastChallengeTime) > ChallengeInterval)
+                      (entry.Validated && (!challengeAttemptedRecently || time.Since(lastChallengeTime) > ChallengeInterval))
 
 
     if needsChallenge {
@@ -1121,8 +1118,9 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
         ms.challengeMu.Unlock()
         go ms.PerformValidation(ip, heartbeat.Port) // Use the derived IP
     } else {
-        //log.Printf("Validation not needed for %s:%d (Validated: %t, Last Challenge: %v)",
-        //    ip, heartbeat.Port, entry.Validated, lastChallengeTime)
+        // Optional: Log if validation is skipped for debugging
+        // log.Printf("Validation not needed for %s:%d (Validated: %t, Last Challenge: %v)",
+        //     ip, heartbeat.Port, entry.Validated, lastChallengeTime)
     }
 
 
