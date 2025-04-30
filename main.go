@@ -1,4 +1,3 @@
-// ms.go
 package main
 
 import (
@@ -18,12 +17,46 @@ import (
 	"time"
 	"unicode"
 
+	"regexp"
+	"github.com/oschwald/geoip2-golang"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/time/rate"
 )
+
+// ---------- Region codes ----------
+const (
+	RegionNAE = "[NAEst]" // North America – East
+	RegionNAC = "[NACen]" // North America – Central
+	RegionNAW = "[NAWst]" // North America – West
+	RegionCAM = "[CAmer]" // Central America
+	RegionSAM = "[SAmer]" // South America
+	RegionEWE = "[EUWst]" // Europe – West
+	RegionEEE = "[EUEst]" // Europe – East
+	RegionRUS = "[Rusia]" // Russia
+	RegionASE = "[AsiaE]" // Asia – East
+	RegionASS = "[AsiaS]" // Asia – South
+	RegionAEA = "[AsSEA]" // Asia – Southeast
+	RegionOCE = "[Ocean]" // Oceania
+	RegionMEA = "[MEast]" // Middle East
+	RegionAFR = "[Afric]" // Africa
+	RegionLOC = "[LOCL]"  // Private / loopback
+	RegionUNK = "[UNKN]"  // Unknown
+)
+
+// longitude cut-offs (refined)
+const (
+	naWestCut    = -105.0 // < −105 → West
+	naCentralCut =  -90.0 // −105..−90 → Central ; ≥ −90 → East
+	euWestCut    =   20.0 // < 20 E → EU-West
+)
+
+// pre-compiled once for prefix-strip: [[XXXXX]]␠
+var stripPrefix = regexp.MustCompile(`^\[[A-Za-z]{5}\]\s*`)
+
 
 // ServerEntry holds info about a registered game server.
 type ServerEntry struct {
@@ -86,6 +119,7 @@ type MasterServer struct {
 	challenges     map[string]time.Time    // last challenge time per key
 	lastHeartbeats map[string]time.Time    // last heartbeat time per key
 	db             *sql.DB
+	geoip          *geoip2.Reader
 
 	// Per-IP rate limiters (keyed by client IP)
 	limiters   map[string]*rate.Limiter
@@ -93,6 +127,57 @@ type MasterServer struct {
 	serversMu  sync.RWMutex
 	challengeMu sync.Mutex
 }
+
+// determineRegionCode maps a GeoIP “City” record to one of the 5-letter codes.
+func determineRegionCode(rec *geoip2.City) string {
+	if rec == nil || rec.Continent == nil { return RegionUNK }
+
+	cc := rec.Country.IsoCode
+	lon := rec.Location.Longitude
+	hasLoc := rec.Location != nil && lon != 0
+
+	// country overrides (fast path)
+	if cc == "RU"      { return RegionRUS }
+	if _, ok := map[string]struct{}{
+		"BZ":{}, "CR":{}, "SV":{}, "GT":{}, "HN":{}, "NI":{}, "PA":{}, "MX":{},
+	}[cc]; ok { return RegionCAM }
+	if _, ok := map[string]struct{}{
+		"AE":{}, "BH":{}, "CY":{}, "EG":{}, "IR":{}, "IQ":{}, "IL":{}, "JO":{},
+		"KW":{}, "LB":{}, "OM":{}, "PS":{}, "QA":{}, "SA":{}, "SY":{}, "TR":{}, "YE":{},
+	}[cc]; ok { return RegionMEA }
+	if _, ok := map[string]struct{}{
+		"AF":{}, "BD":{}, "BT":{}, "IN":{}, "MV":{}, "NP":{}, "PK":{}, "LK":{},
+	}[cc]; ok { return RegionASS }
+	if _, ok := map[string]struct{}{
+		"BN":{}, "KH":{}, "ID":{}, "LA":{}, "MY":{}, "MM":{}, "PH":{}, "SG":{},
+		"TH":{}, "TL":{}, "VN":{},
+	}[cc]; ok { return RegionAEA }
+
+	switch rec.Continent.Code {
+	case "NA":
+		if !hasLoc { return RegionNAE }
+		switch {
+		case lon < naWestCut:    return RegionNAW
+		case lon < naCentralCut: return RegionNAC
+		default:                 return RegionNAE
+		}
+	case "EU":
+		if !hasLoc { return RegionEWE }
+		if lon < euWestCut { return RegionEWE }
+		return RegionEEE
+	case "AS":
+		return RegionASE // defaults; sub-regions handled earlier
+	case "SA":
+		return RegionSAM
+	case "AF":
+		return RegionAFR
+	case "OC":
+		return RegionOCE
+	default:
+		return RegionUNK
+	}
+}
+
 
 // getLimiter returns a rate limiter for the given IP (creating one if needed).
 func (ms *MasterServer) getLimiter(ip string) *rate.Limiter {
@@ -295,7 +380,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	var userResponse struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
-		
+
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&userResponse); err != nil {
 		log.Printf("Failed to decode user response: %v", err)
@@ -606,7 +691,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	heartbeat.HostName = hostname
 	if(strings.Contains(heartbeat.MapName, "mp_npe")) {
 		c.Status(http.StatusOK)
-		return 
+		return
 	}
 	// Validate map name.
 	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName)  {
@@ -618,52 +703,29 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 
 	// Validate game mode.
 	if heartbeat.GameMode == "" || len(heartbeat.GameMode) > 32 || !isValidGameMode(heartbeat.GameMode) {
-		log.Printf("Invalid game mode %q from %s", heartbeat.GameMode, c.ClientIP())
-		c.String(http.StatusBadRequest, "Invalid game mode format (lowercase letters, numbers, underscores only)")
-		c.Abort()
-		return
-	}
-
-	// Validate max players.
-	if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers >= 20 {
-		log.Printf("Invalid max players %d from %s", heartbeat.MaxPlayers, c.ClientIP())
-		c.String(http.StatusBadRequest, "Invalid max players (must be 2-19)")
-		c.Abort()
-		return
-	}
-	
-	if len(heartbeat.Players) > heartbeat.MaxPlayers {
-	    log.Printf("Too many players (%d) vs max players (%d) from %s", len(heartbeat.Players), heartbeat.MaxPlayers, c.ClientIP())
-	    c.String(http.StatusBadRequest, "Player count exceeds max players")
-	    c.Abort()
-	    return
-	}
-	// Validate player names.
-	for _, player := range heartbeat.Players {
-		if strings.TrimSpace(player.Name) == "" {
-			log.Printf("Empty player name in heartbeat from %s", c.ClientIP())
-			c.String(http.StatusBadRequest, "Player names cannot be empty")
-			c.Abort()
-			return
+		log.Printf("Invalid game mode %q from %s", heartbeat.GameIP(), err)
+			regionCode = RegionUNK
+		} else if parsedIP.IsLoopback() || parsedIP.IsPrivate() {
+			regionCode = RegionLOC
+		} else if ms.geoip != nil {
+			rec, err := ms.geoip.City(parsedIP)
+			if err != nil {
+				log.Printf("GeoIP lookup failed for %s: %v", ip, err)
+				regionCode = RegionUNK
+			} else {
+				regionCode = determineRegionCode(rec)
+			}
 		}
-	}
 
-	// Determine the IP of the connecting server.
-	clientIP := c.ClientIP()
-	ip, _, err := net.SplitHostPort(clientIP)
-	if err != nil {
-		ip = clientIP
-	}
-	// Override loopback with public IP if necessary.
-	if ip == "127.0.0.1" || ip == "::1" {
-		publicIP, err := getPublicIP()
-		if err != nil {
-			log.Printf("Could not determine public IP for loopback override: %v", err)
+		// strip any old [[XXX]] prefix then prepend new one
+		cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
+		cleanName = strings.TrimSpace(cleanName)
+		if cleanName == "" {
+			heartbeat.HostName = regionCode
 		} else {
-			ip = publicIP
-			log.Printf("Overriding loopback IP with public IP: %s", ip)
+			heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, cleanName)
 		}
-	}
+		// ---------- END REGION-PREFIX LOGIC ----------
 
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port)
 
@@ -966,6 +1028,17 @@ func main() {
 		// log.Fatalf("Failed to set WAL mode: %v", err)
 	// }
 
+	// --- GeoIP init ------------------------------------------------------
+	dbPath := os.Getenv("GEOIP_DB_PATH")
+	if dbPath == "" { dbPath = "GeoLite2-City.mmdb" }
+
+	geoipRdr, err := geoip2.Open(dbPath)
+	if err != nil { log.Fatalf("Cannot open GeoIP DB %q: %v", dbPath, err) }
+	defer geoipRdr.Close()
+	log.Printf("GeoIP database loaded from %s", dbPath)
+	// ---------------------------------------------------------------------
+
+
 	// Fetch Cloudflare IP ranges.
 	cfIPs, err := fetchCloudflareIPs()
 	if err != nil {
@@ -981,7 +1054,8 @@ func main() {
 
 	// Initialize master server instance.
 	ms := NewMasterServer()
-	ms.db = db
+	ms.db    = db
+	ms.geoip = geoipRdr
 
 	// Start the cleanup goroutine.
 	go ms.CleanupOldEntries()
