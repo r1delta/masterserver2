@@ -139,13 +139,15 @@ func determineRegionCode(rec *geoip2.City) string {
 
 	cc := rec.Country.IsoCode
 
+
+	return cc; // just put the country code in the bag wagie
+/*
 	// Fix: Location is a non-pointer struct. Check if its data is meaningful, not if the struct itself is nil.
 	// Declare variables before checking for location data.
 	var lon float64
 	// Check if Location data is meaningful (e.g., non-zero lat/lon)
 	hasLoc := rec.Location.Latitude != 0 || rec.Location.Longitude != 0
-	return cc; // just put the country code in the bag wagie
-/*
+ 
 	if hasLoc {
 		//lon = rec.Location.Longitude
 	} else {
