@@ -945,6 +945,28 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	    hostname = hostname[:64]
 	}
 	
+	// ---------- REGION-PREFIX LOGIC ----------
+	var regionCode string
+	// Parse the IP and check for errors
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		log.Printf("Invalid IP address parsed from c.ClientIP() for heartbeat: %s", ip)
+		regionCode = RegionUNK // Treat as unknown if IP is invalid
+	} else if parsedIP.IsLoopback() || parsedIP.IsPrivate() {
+		regionCode = RegionLOC // Mark as local if it's a private/loopback IP
+	} else if ms.geoip != nil {
+		rec, geoipErr := ms.geoip.City(parsedIP) // Use a specific error variable for geoip
+		if geoipErr != nil {
+			log.Printf("GeoIP lookup failed for %s: %v", ip, geoipErr) // Use specific error variable
+			regionCode = RegionUNK // Treat as unknown if GeoIP fails
+		} else {
+			regionCode = determineRegionCode(rec) // Determine region from GeoIP record
+		}
+	} else {
+        // GeoIP database not loaded (should be fatal, but handle defensively)
+        // Logged at startup if failed. Just assign UNK.
+        regionCode = RegionUNK
+    }
 	// strip any old [[XXXXX]] prefix then prepend new one
 	cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
 	cleanName = strings.TrimSpace(cleanName)
@@ -1016,28 +1038,6 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
  	}
 
 
-	// ---------- REGION-PREFIX LOGIC ----------
-	var regionCode string
-	// Parse the IP and check for errors
-	parsedIP := net.ParseIP(ip)
-	if parsedIP == nil {
-		log.Printf("Invalid IP address parsed from c.ClientIP() for heartbeat: %s", ip)
-		regionCode = RegionUNK // Treat as unknown if IP is invalid
-	} else if parsedIP.IsLoopback() || parsedIP.IsPrivate() {
-		regionCode = RegionLOC // Mark as local if it's a private/loopback IP
-	} else if ms.geoip != nil {
-		rec, geoipErr := ms.geoip.City(parsedIP) // Use a specific error variable for geoip
-		if geoipErr != nil {
-			log.Printf("GeoIP lookup failed for %s: %v", ip, geoipErr) // Use specific error variable
-			regionCode = RegionUNK // Treat as unknown if GeoIP fails
-		} else {
-			regionCode = determineRegionCode(rec) // Determine region from GeoIP record
-		}
-	} else {
-        // GeoIP database not loaded (should be fatal, but handle defensively)
-        // Logged at startup if failed. Just assign UNK.
-        regionCode = RegionUNK
-    }
 
 
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port) // Key is IP:Port
