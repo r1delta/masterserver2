@@ -151,8 +151,8 @@ func determineRegionCode(rec *geoip2.City) string {
 		// The code below relies on the `!hasLoc` checks within the NA/EU cases
 		// to default the region if location data is missing. This is fine.
 	}
-
-
+	return CC; // just put the country code in the bag wagie
+/*
 	// country overrides (fast path) - these don't typically depend on longitude
 	if cc == "RU"      { return RegionRUS }
 	if _, ok := map[string]struct{}{
@@ -192,7 +192,7 @@ func determineRegionCode(rec *geoip2.City) string {
 		return RegionOCE
 	default:
 		return RegionUNK
-	}
+	}*/
 }
 
 
