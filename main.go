@@ -982,11 +982,11 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	hostname = strings.Map(func(r rune) rune {
 	    // Keep letters, numbers, spaces, and some common punctuation. Remove others.
         // Added ' ' back, removed square brackets as they are used for region.
-	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_", r) {
+	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_[]", r) {
             return r
         }
 	    return '_' // Replace disallowed characters with underscore
-	}, hostname)
+	}, cleanName)
 	// Trim leading/trailing underscores or spaces that might result from sanitization
     hostname = strings.Trim(hostname, "_ ")
 
