@@ -56,7 +56,7 @@ const (
 )
 
 // pre-compiled once for prefix-strip: [[XXXXX]]␠
-var stripPrefix = regexp.MustCompile(`^\[[A-Za-z]{5}\]\s*`)
+var stripPrefix = regexp.MustCompile(`^\[[A-Z]{2,5}\]\s`)
 
 
 // ServerEntry holds info about a registered game server.
