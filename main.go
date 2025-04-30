@@ -944,11 +944,23 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	if len(hostname) > 64 {
 	    hostname = hostname[:64]
 	}
+	
+	// strip any old [[XXXXX]] prefix then prepend new one
+	cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
+	cleanName = strings.TrimSpace(cleanName)
+	// Ensure there's a space between region code and name only if there's a name
+	if cleanName == "" {
+		heartbeat.HostName = regionCode // Just the region code if no original name
+	} else {
+		heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, cleanName)
+	}
+	// ---------- END REGION-PREFIX LOGIC ----------
+	
 	// Replace any potentially problematic characters
 	hostname = strings.Map(func(r rune) rune {
 	    // Keep letters, numbers, spaces, and some common punctuation. Remove others.
         // Added ' ' back, removed square brackets as they are used for region.
-	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'", r) {
+	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_", r) {
             return r
         }
 	    return '_' // Replace disallowed characters with underscore
@@ -1027,16 +1039,6 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
         regionCode = RegionUNK
     }
 
-	// strip any old [[XXXXX]] prefix then prepend new one
-	cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
-	cleanName = strings.TrimSpace(cleanName)
-	// Ensure there's a space between region code and name only if there's a name
-	if cleanName == "" {
-		heartbeat.HostName = regionCode // Just the region code if no original name
-	} else {
-		heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, cleanName)
-	}
-	// ---------- END REGION-PREFIX LOGIC ----------
 
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port) // Key is IP:Port
 
