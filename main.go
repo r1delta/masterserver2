@@ -134,18 +134,26 @@ type MasterServer struct {
 // determineRegionCode maps a GeoIP “City” record to one of the 5-letter codes.
 func determineRegionCode(rec *geoip2.City) string {
 	// Check if rec is nil or if Continent data exists via Code
-	if rec == nil || rec.Continent == nil || rec.Continent.Code == "" { return RegionUNK }
+	// Fix: rec.Continent is a struct, cannot compare to nil. Check Code field.
+	if rec == nil || rec.Continent.Code == "" { return RegionUNK }
 
 	cc := rec.Country.IsoCode
-	// Fix: Check if Location is nil before accessing its fields
-	var lon float64
-	hasLoc := false
-	if rec.Location != nil {
-        lon = rec.Location.Longitude
-		hasLoc = rec.Location.Latitude != 0 || rec.Location.Longitude != 0
-    }
 
-	// country overrides (fast path)
+	// Fix: Location is a non-pointer struct. Check if its data is meaningful, not if the struct itself is nil.
+	// Declare variables before checking for location data.
+	var lon float64
+	// Check if Location data is meaningful (e.g., non-zero lat/lon)
+	hasLoc := rec.Location.Latitude != 0 || rec.Location.Longitude != 0
+	if hasLoc {
+		lon = rec.Location.Longitude
+	} else {
+		// If no location data, lon remains its zero value (0.0).
+		// The code below relies on the `!hasLoc` checks within the NA/EU cases
+		// to default the region if location data is missing. This is fine.
+	}
+
+
+	// country overrides (fast path) - these don't typically depend on longitude
 	if cc == "RU"      { return RegionRUS }
 	if _, ok := map[string]struct{}{
 		"BZ":{}, "CR":{}, "SV":{}, "GT":{}, "HN":{}, "NI":{}, "PA":{}, "MX":{},
@@ -165,14 +173,14 @@ func determineRegionCode(rec *geoip2.City) string {
 	switch rec.Continent.Code {
 	case "NA":
 		if !hasLoc { return RegionNAE } // Default NA region if no detailed location
-		switch {
+		switch { // Use the calculated 'lon' here
 		case lon < naWestCut:    return RegionNAW
 		case lon < naCentralCut: return RegionNAC
 		default:                 return RegionNAE
 		}
 	case "EU":
 		if !hasLoc { return RegionEWE } // Default EU region if no detailed location
-		if lon < euWestCut { return RegionEWE }
+		if lon < euWestCut { return RegionEWE } // Use the calculated 'lon' here
 		return RegionEEE
 	case "AS":
 		return RegionASE // defaults; sub-regions handled earlier
@@ -186,6 +194,7 @@ func determineRegionCode(rec *geoip2.City) string {
 		return RegionUNK
 	}
 }
+
 
 
 // getLimiter returns a rate limiter for the given IP (creating one if needed).
@@ -662,6 +671,9 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
             continue // Log error and continue with the next payload
 		}
 
+		// Fix: Declare 'token' variable outside the conditional blocks so it's in scope for line 677 (and 682).
+		var token string
+
         if err == sql.ErrNoRows {
             // Record does not exist, create a new one.
             log.Printf("Bot sync registering new user: %s (%s)", p.DiscordId, p.Username)
@@ -674,11 +686,13 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
                 "pomelo_name":  p.PomeloName,
                 // Permanent token doesn't expire
             })
+			// Fix: Assign to the 'token' variable declared above. This is line 677.
             token, err = tkn.SignedString([]byte(jwtSecret))
             if err != nil {
                 log.Printf("Failed to create Discord JWT token for %s: %v", p.DiscordId, err)
                 continue // Log error and continue, don't abort batch
             }
+			// Fix: Use the 'token' variable. This is line 682.
             _, err = insertStmt.Exec(p.DiscordId, p.Username, token, p.DisplayName, p.PomeloName)
             if err != nil {
                 log.Printf("Failed to store Discord token in database for %s: %v", p.DiscordId, err)
@@ -695,6 +709,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
             }
              // log.Printf("Bot sync updated user: %s (%s)", p.DiscordId, p.Username) // Optional: Log updates
         }
+		// Fix: Increment processedCount for both new inserts and updates.
         processedCount++
 	}
 
