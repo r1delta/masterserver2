@@ -46,6 +46,7 @@ const (
 	RegionAFR = "[Afric]" // Africa
 	RegionLOC = "[LOCAL]"  // Private / loopback IPs detected by master server
 	RegionUNK = "[UNKNW]"  // Unknown or GeoIP failed
+)
 
 // longitude cut-offs (refined)
 const (
