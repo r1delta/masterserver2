@@ -988,7 +988,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 
     // Construct the final hostname by prepending the region code to the sanitized clean name.
     // The prefix is formatted as [[CODE]], e.g., [[US-EAST]]
-    heartbeat.HostName = fmt.Sprintf("[[%s]] %s", regionCode, sanitizedCleanName) // Correctly format and assign
+    heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, sanitizedCleanName) // Correctly format and assign
 
 	// Limit total hostname length after prefixing
 	if len(heartbeat.HostName) > 64 {
