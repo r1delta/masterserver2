@@ -26,6 +26,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/time/rate"
+	"sort"
 )
 
 // ---------- Region codes ----------
@@ -1304,7 +1305,11 @@ func (ms *MasterServer) GetServers(c *gin.Context) {
 			validServers = append(validServers, s)
 		}
 	}
-
+    // Sort the validServers slice by TotalPlayers in descending order.
+    sort.Slice(validServers, func(i, j int) bool {
+        // For descending order, return true if i's player count is greater than j's.
+        return validServers[i].TotalPlayers > validServers[j].TotalPlayers
+    })
 	c.JSON(http.StatusOK, validServers)
 }
 
