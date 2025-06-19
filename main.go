@@ -465,7 +465,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	// Return the new permanent token and Discord access token.
 	c.JSON(http.StatusOK, gin.H{
         "token": permanentToken, // The new permanent master token
-        "access_token": token, // Return Discord access token (as client expects it)
         "discord_id": userResponse.ID,
         "username": userResponse.Username, // Return Discord's new username
         "display_name": displayName, // Return determined display name
