@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv" // <-- Added missing import
 	"strings"
@@ -19,14 +18,16 @@ import (
 	"unicode"
 
 	"regexp"
+
 	"github.com/oschwald/geoip2-golang"
+
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/time/rate"
-	"sort"
 )
 
 // ---------- Region codes ----------
@@ -336,88 +337,25 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
 // Authentication: None initially, uses code from Discord redirect
 // Response: { "token": "permanent_master_auth_token", "access_token": "...", "discord_id": "...", "username": "...", "pomelo_name": "..." }
 func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
-	code, exists := c.GetQuery("code")
-	if !exists || code == "" {
+	token, exists := c.GetQuery("token")
+	if !exists || token == "" {
 		log.Printf("Invalid Discord auth code from %s: missing 'code' query parameter", c.ClientIP())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Discord auth code"})
 		return
 	}
 
-	log.Printf("Discord auth code received: %s (from %s)", code, c.ClientIP())
+	log.Printf("Discord auth code received: %s (from %s)", token, c.ClientIP())
 
-	// Exchange the code for an access token.
-	CLIENT_SECRET := os.Getenv("CLIENT_SECRET")
-	REDIRECT_URI := os.Getenv("REDIRECT_URI")
-	CLIENT_ID := os.Getenv("CLIENT_ID")
-
-    if CLIENT_SECRET == "" || REDIRECT_URI == "" || CLIENT_ID == "" {
-        log.Fatalf("Missing Discord environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)")
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
-        return
-    }
-
-	formData := url.Values{}
-	formData.Set("grant_type", "authorization_code")
-	formData.Set("code", code)
-	formData.Set("redirect_uri", REDIRECT_URI)
-	formData.Set("client_id", CLIENT_ID)
-	formData.Set("client_secret", CLIENT_SECRET)
-
-	req, err := http.NewRequest("POST", "https://discord.com/api/oauth2/token", strings.NewReader(formData.Encode()))
-	if err != nil {
-		log.Printf("Failed to create token exchange request: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
-		return
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("Failed to exchange code for token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error exchanging code"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Failed to read token response body: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response"})
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Unexpected status code from Discord /oauth2/token: %d, body: %s", resp.StatusCode, string(body))
-        var errorResponse struct { Error string `json:"error"`; ErrorDescription string `json:"error_description"` }
-        if jsonErr := json.Unmarshal(body, &errorResponse); jsonErr == nil && errorResponse.ErrorDescription != "" {
-             c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Discord API error: %s", errorResponse.ErrorDescription)})
-        } else {
-             c.JSON(resp.StatusCode, gin.H{"error": "Error from Discord API"})
-        }
-		return
-	}
-
-	var tokenResponse struct {
-		TokenType    string `json:"token_type"`
-		AccessToken  string `json:"access_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		RefreshToken string `json:"refresh_token"`
-		Scope        string `json:"scope"`
-	}
-	if err := json.Unmarshal(body, &tokenResponse); err != nil {
-		log.Printf("Failed to decode token response: %v (body: %s)", err, string(body))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode token response"})
-		return
-	}
-
+	
 	// Get user info from Discord using the access token.
-	req, err = http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
+	req, err := http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
 	if err != nil {
 		log.Printf("Failed to create user info request: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user info request"})
 		return
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", tokenResponse.AccessToken))
-	resp, err = http.DefaultClient.Do(req)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("Failed to get user info: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting user info"})
@@ -475,7 +413,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 		// Return the existing token and the latest user info from DB/Discord
 		c.JSON(http.StatusOK, gin.H{
             "token": existingToken, // Return existing permanent token
-            "access_token": tokenResponse.AccessToken, // Return Discord access token (as client expects it)
             "discord_id": userResponse.ID,
             "username": userResponse.Username, // Return Discord's new username
             "display_name": displayName, // Return determined display name
@@ -528,7 +465,7 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	// Return the new permanent token and Discord access token.
 	c.JSON(http.StatusOK, gin.H{
         "token": permanentToken, // The new permanent master token
-        "access_token": tokenResponse.AccessToken, // Return Discord access token (as client expects it)
+        "access_token": token, // Return Discord access token (as client expects it)
         "discord_id": userResponse.ID,
         "username": userResponse.Username, // Return Discord's new username
         "display_name": displayName, // Return determined display name
