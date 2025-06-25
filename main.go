@@ -72,6 +72,7 @@ type ServerEntry struct {
 	PlaylistDisplayName string `json:"playlist_display_name"`
 	HasPassword bool         `json:"has_password"`
 	TotalPlayers int         `json:"total_players"`
+	HasAuth 	  bool         `json:"has_auth"`
 	IP          string       `json:"ip"`
 	Version     string       `json:"version"` // Added Version field
 	Port        int          `json:"port"`
@@ -858,6 +859,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		PlaylistDisplayName string `json:"playlist_display_name"`
 		Port       int          `json:"port"`
 		HasPassword bool        `json:"has_password"`
+		HasAuth 	  bool        `json:"has_auth"`
 		Players    []PlayerInfo `json:"players"` // Array of players
         // TotalPlayers field is computed from len(Players)
 	}
@@ -1008,6 +1010,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		GameMode:    heartbeat.GameMode,
 		MaxPlayers:  heartbeat.MaxPlayers,
 		HasPassword: heartbeat.HasPassword,
+		HasAuth:    heartbeat.HasAuth,
 		Description: heartbeat.Description,
 		Playlist:   heartbeat.Playlist,
 		TotalPlayers: len(heartbeat.Players), // Calculate TotalPlayers from len(Players)
