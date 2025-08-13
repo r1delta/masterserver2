@@ -995,7 +995,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 				count++
 			}
 		}
-		if count >= 5 {
+		if count >= 20 {
 			log.Printf("Too many servers (%d) for IP %s from %s", count, ip, c.ClientIP())
 			c.String(http.StatusBadRequest, "Maximum 5 servers per IP")
 			c.Abort()
