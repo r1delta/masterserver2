@@ -939,11 +939,11 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 
 
 	// Disallow specific map names if needed
-	if strings.Contains(heartbeat.MapName, "mp_npe") {
-		log.Printf("Ignoring heartbeat from %s:%d on disallowed map '%s'", ip, heartbeat.Port, heartbeat.MapName)
-		c.Status(http.StatusOK) // Indicate successful processing, but server won't be listed
-		return
-	}
+	// if strings.Contains(heartbeat.MapName, "mp_npe") {
+	// 	log.Printf("Ignoring heartbeat from %s:%d on disallowed map '%s'", ip, heartbeat.Port, heartbeat.MapName)
+	// 	c.Status(http.StatusOK) // Indicate successful processing, but server won't be listed
+	// 	return
+	// }
 
 	// Validate map name.
 	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName)  {
