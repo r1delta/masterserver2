@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -79,6 +78,13 @@ type ServerEntry struct {
 	Players     []PlayerInfo `json:"players"`
 	LastUpdated time.Time    `json:"-"` // Exclude from JSON
 	Validated   bool         `json:"validated"`
+	// NAT traversal (see nat.go)
+	Transports  *Transports  `json:"transports,omitempty"` // Alternative transports advertised by the server
+	Reach       Reachability `json:"reach"`                // Which paths validation succeeded through
+	P2P         bool         `json:"p2p"`                  // Server understands R1NX pings / hole punching (sent a "nat" object)
+	LAN         []string     `json:"-"`                    // Private addresses, only handed to same-public-IP clients
+	WantTurn    bool         `json:"-"`
+	ValidationAttempted bool `json:"-"`
 }
 
 // PlayerInfo represents a player on the game server.
@@ -132,6 +138,9 @@ type MasterServer struct {
 	limiterMu  sync.Mutex
 	serversMu  sync.RWMutex
 	challengeMu sync.Mutex
+
+	rendezvous *Rendezvous // nil when the UDP rendezvous is disabled
+	turn       *TurnBroker // nil when Cloudflare TURN is not configured
 }
 
 // determineRegionCode maps a GeoIP “City” record to one of the 5-letter codes.
@@ -862,6 +871,8 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		HasAuth 	  bool        `json:"has_auth"`
 		Players    []PlayerInfo `json:"players"` // Array of players
         // TotalPlayers field is computed from len(Players)
+		Transports *Transports  `json:"transports"` // Optional alternative transports (EOS, iroh, tailcat, ...)
+		Nat        *NatInfo     `json:"nat"`        // Optional NAT traversal info
 	}
 	if err := c.ShouldBindJSON(&heartbeat); err != nil {
 		log.Printf("Invalid heartbeat format from %s: %v", c.ClientIP(), err)
@@ -981,7 +992,12 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port) // Key is IP:Port
 
 	ms.serversMu.Lock()
-	defer ms.serversMu.Unlock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			ms.serversMu.Unlock()
+		}
+	}()
 
 	// Retrieve existing server entry if it exists to preserve validation status.
 	existingEntry, serverExists := ms.servers[key]
@@ -1023,6 +1039,16 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		// Preserve existing validation status if server already exists, otherwise default to false.
         // If a server stops heartbeating and is removed, the next heartbeat is treated as new (Validated: false).
 		Validated:   serverExists && existingEntry.Validated,
+		Transports:  sanitizeTransports(heartbeat.Transports),
+	}
+	if serverExists {
+		entry.Reach = existingEntry.Reach
+		entry.ValidationAttempted = existingEntry.ValidationAttempted
+	}
+	if heartbeat.Nat != nil {
+		entry.P2P = true
+		entry.LAN = sanitizeLAN(heartbeat.Nat.LAN)
+		entry.WantTurn = heartbeat.Nat.WantTurn
 	}
 
     // Store/update the server entry
@@ -1065,45 +1091,98 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
         //     ip, heartbeat.Port, entry.Validated, lastChallengeTime)
     }
 
+	// Build the response while still holding the lock, then release it before
+	// doing any (potentially slow) TURN credential minting.
+	resp := heartbeatResponse{
+		PublicIP:  ip,
+		Reach:     entry.Reach,
+		Validated: entry.Validated,
+	}
+	wantTurn := entry.WantTurn && entry.ValidationAttempted && !entry.Reach.Direct
+	ms.serversMu.Unlock()
+	unlocked = true
 
-	c.Status(http.StatusOK)
+	if ms.rendezvous != nil {
+		token := ms.rendezvous.TokenFor(key)
+		resp.Token = hex.EncodeToString(token[:])
+		resp.Rendezvous = ms.rendezvous.publicAddr
+	}
+	if wantTurn && ms.turn != nil {
+		creds, err := ms.turn.Get(key)
+		if err != nil {
+			log.Printf("[NAT] TURN credentials for %s unavailable: %v", key, err)
+		} else {
+			resp.Turn = creds
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
-// PerformValidation sends a UDP challenge to the server and marks it validated on success.
+// PerformValidation challenges the server through every path it could be
+// reached by (direct UDP, its rendezvous NAT mapping, its TURN relay) and marks
+// it validated if any of them answers correctly.
 func (ms *MasterServer) PerformValidation(ip string, port int) {
 	key := fmt.Sprintf("%s:%d", ip, port) // Use IP:Port as key
 	log.Printf("[Validation] Starting validation for %s", key) // Log key
 
     // Check if the server entry still exists in the map. It might have been removed by cleanup.
     ms.serversMu.RLock()
-    _, exists := ms.servers[key]
+    entry, exists := ms.servers[key]
+    var turnRelay string
+    if exists && entry.Transports != nil && entry.Transports.Turn != nil {
+        turnRelay = entry.Transports.Turn.Relay
+    }
     ms.serversMu.RUnlock()
     if !exists {
         log.Printf("[Validation] Server %s disappeared from map before validation could start.", key)
         return // Server removed, no need to validate
     }
 
+	var reach Reachability
+	reach.Direct = ms.challengeDirect(key)
+	if ms.rendezvous != nil {
+		if mapped, ok := ms.rendezvous.Mapped(key); ok {
+			if mapped.String() == key && reach.Direct {
+				reach.Punch = true // mapping == listed address, nothing more to test
+			} else {
+				reach.Punch = ms.challengeVia(mapped)
+			}
+		}
+		if turnRelay != "" && !reach.Direct {
+			if relay, err := parsePublicAddrPort(turnRelay); err == nil {
+				reach.Turn = ms.challengeVia(relay)
+			}
+		}
+	}
 
-	nonce := make([]byte, 4)
-	if _, err := rand.Read(nonce); err != nil {
-		log.Printf("[Validation] Failed to generate nonce for %s: %v", key, err)
-		// Don't mark as unvalidated for internal master server error
+	ms.serversMu.Lock()
+	defer ms.serversMu.Unlock() // Ensure lock is released after the update
+
+	server, exists := ms.servers[key]
+	if !exists {
+		// This can happen if the server was removed by cleanup while we were validating.
+		log.Printf("[Validation] Server %s not found in map after validation attempt", key)
 		return
 	}
-	nonceStr := "0x" + hex.EncodeToString(nonce)
+	valid := reach.Direct || reach.Punch || reach.Turn
+	if valid && !server.Validated {
+		log.Printf("[Validation] Successfully validated %s (%s) direct=%t punch=%t turn=%t",
+			key, server.HostName, reach.Direct, reach.Punch, reach.Turn)
+	} else if !valid {
+		log.Printf("[Validation] Validation failed for %s on every path", key)
+	}
+	server.Validated = valid
+	server.Reach = reach
+	server.ValidationAttempted = true
+}
 
-	addr := fmt.Sprintf("%s:%d", ip, port)
-	conn, err := net.DialTimeout("udp", addr, 2*time.Second) // Use a short timeout
+// challengeDirect sends the connect challenge straight to the listed address.
+func (ms *MasterServer) challengeDirect(key string) bool {
+	conn, err := net.DialTimeout("udp", key, 2*time.Second) // Use a short timeout
 	if err != nil {
 		log.Printf("[Validation] Connection failed to %s: %v", key, err)
-		// Mark server as unvalidated due to connection failure
-		ms.serversMu.Lock()
-        if server, exists := ms.servers[key]; exists { // Re-check existence
-             server.Validated = false // Mark as not validated
-             log.Printf("[Validation] Marked %s as unvalidated due to connection failure", key)
-        }
-		ms.serversMu.Unlock()
-		return
+		return false
 	}
 	defer conn.Close()
 
@@ -1111,82 +1190,32 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 	// FF FF FF FF 48 63 6F 6E 6E 65 63 74 <nonce 10 bytes including 0x> 00
 	// FF FF FF FF  H  c  o  n  n  e  c  t <nonce> 00
 	// Total length = 4 + 1 + 7 + 10 + 1 = 23 bytes
-	challengePacket := make([]byte, 23)
-	copy(challengePacket[0:4], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // Header
-	challengePacket[4] = 0x48 // S2C_CHALLENGE (This seems correct based on Half-Life/Source protocol variants)
-	copy(challengePacket[5:12], "connect") // Command string
-	copy(challengePacket[12:22], nonceStr) // Nonce (10 bytes including 0x)
-	challengePacket[22] = 0x00 // Null terminator
+	challengePacket, nonceStr := buildChallengePacket()
+	if challengePacket == nil {
+		return false
+	}
 
 	log.Printf("[Validation] Sending challenge to %s (nonce: %s)", key, nonceStr)
 	conn.SetDeadline(time.Now().Add(3 * time.Second)) // Increase deadline slightly for read/write combined
 	if _, err := conn.Write(challengePacket); err != nil {
 		log.Printf("[Validation] Failed to send challenge to %s: %v", key, err)
-		// Mark server as unvalidated due to write failure
-        ms.serversMu.Lock()
-        if server, exists := ms.servers[key]; exists { // Re-check existence
-             server.Validated = false
-             log.Printf("[Validation] Marked %s as unvalidated due to write failure", key)
-        }
-        ms.serversMu.Unlock()
-		return
+		return false
 	}
 
 	respBuf := make([]byte, 1024) // Use a reasonable buffer size
-    // The read deadline is set by conn.SetDeadline above
 	n, err := conn.Read(respBuf)
 	if err != nil {
 		// Timeout or other read error
 		log.Printf("[Validation] Failed to read response from %s: %v", key, err)
-		// Server failed validation (no response or error)
-		ms.serversMu.Lock()
-        if server, exists := ms.servers[key]; exists { // Re-check existence
-             server.Validated = false // Mark as not validated
-             log.Printf("[Validation] Marked %s as unvalidated due to read error", key)
-        }
-		ms.serversMu.Unlock()
-		return
+		return false
 	}
 	if n < 26 { // Minimum expected response length based on validateResponse logic
 		log.Printf("[Validation] Short response (%d bytes) from %s", n, key)
-		ms.serversMu.Lock()
-        if server, exists := ms.servers[key]; exists { // Re-check existence
-             server.Validated = false // Mark as not validated
-             log.Printf("[Validation] Marked %s as unvalidated due to short response", key)
-        }
-		ms.serversMu.Unlock()
-		return
+		return false
 	}
 
 	log.Printf("[Validation] Received %d bytes from %s", n, key)
-
-	// validateResponse checks structure and nonce. It also logs internal failures.
-	if !validateResponse(respBuf[:n], nonceStr) {
-		log.Printf("[Validation] Validation failed for %s", key)
-		// Mark server as not validated
-		ms.serversMu.Lock()
-		if server, exists := ms.servers[key]; exists { // Re-check existence
-			server.Validated = false
-			log.Printf("[Validation] Marked %s as unvalidated due to validation mismatch", key)
-		}
-		ms.serversMu.Unlock()
-		return
-	}
-
-	// Mark the server as validated on success.
-	ms.serversMu.Lock()
-	defer ms.serversMu.Unlock() // Ensure lock is released after the update
-
-	if server, exists := ms.servers[key]; exists { // Re-check existence one last time
-		if !server.Validated {
-            log.Printf("[Validation] Successfully validated %s (%s)", key, server.HostName)
-        } // No need to log if it was already validated
-		server.Validated = true
-	} else {
-        // This case is unexpected if heartbeat always adds/updates.
-        // It might happen if the server was removed by cleanup just before this line executes.
-        log.Printf("[Validation] Server %s not found in map after successful validation attempt?", key)
-    }
+	return validateResponse(respBuf[:n], nonceStr)
 }
 
 // validateResponse checks that the challenge response is correct.
@@ -1288,6 +1317,7 @@ func (ms *MasterServer) CleanupOldEntries() {
 		}
         for _, k := range keysToDelete {
             delete(ms.servers, k)
+            ms.forgetNatState(k)
             // Also remove associated challenge and heartbeat entries
             ms.challengeMu.Lock()
             delete(ms.challenges, k)
@@ -1408,6 +1438,7 @@ func (ms *MasterServer) HandleDelete(c *gin.Context) {
     }
 
 	delete(ms.servers, key)
+	ms.forgetNatState(key)
     // Also clean up associated challenge and heartbeat entries
     ms.challengeMu.Lock()
     delete(ms.challenges, key)
@@ -1550,6 +1581,13 @@ func main() {
 	ms.db    = db
 	ms.geoip = geoipRdr // Assign the reader (can be nil if loading failed)
 
+	// NAT traversal helpers (UDP rendezvous + optional Cloudflare TURN broker).
+	ms.rendezvous = startRendezvous()
+	ms.turn = newTurnBrokerFromEnv()
+	if ms.rendezvous != nil {
+		ms.rendezvous.onMapped = ms.onServerMapped
+	}
+
 	// Start the cleanup goroutine.
 	go ms.CleanupOldEntries()
 
@@ -1582,6 +1620,7 @@ func main() {
 	r.DELETE("/heartbeat/:port", ms.HandleDelete) // Port is path parameter
 	r.GET("/servers", ms.GetServers)
 	r.GET("/players",ms.GetPlayerCount)
+	r.POST("/nat/connect", ms.HandleNatConnect) // CLIENT asks for a punch ticket + a server's transports
 
 	// Discord/Auth endpoints
 	r.GET("/discord-auth", ms.HandleDiscordAuth) // CLIENT OAuth2 callback handler (No MS_TOKEN)
