@@ -2,12 +2,20 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/hmac"
+	crand "crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,9 +44,16 @@ func TestNatPacketRoundTrip(t *testing.T) {
 	for i := range ticket {
 		ticket[i] = byte(i)
 	}
-	kind, payload, ok = parseNatPacket(encodePunchRequest(ticket, obs))
-	if !ok || kind != pktPunchRequest || !bytes.Equal(payload[:16], ticket[:]) {
+	var token [16]byte
+	token[0] = 7
+	kind, payload, ok = parseNatPacket(encodePunchRequest(ticket, obs, token))
+	if !ok || kind != pktPunchRequest || !bytes.Equal(payload[:16], ticket[:]) || len(payload) != 38 {
 		t.Fatalf("bad punch request")
+	}
+	mac := hmac.New(sha256.New, token[:])
+	mac.Write(payload[:22])
+	if !bytes.Equal(mac.Sum(nil)[:16], payload[22:38]) {
+		t.Fatalf("punch request mac mismatch")
 	}
 	if a, _ := readAddr4(payload[16:]); a != obs {
 		t.Fatalf("punch request addr = %v", a)
@@ -56,11 +71,11 @@ func TestSanitizeTransports(t *testing.T) {
 		Tailscale: &TailscaleTransport{IPs: []string{"100.100.1.2", "8.8.8.8", "fd7a:115c:a1e0::1"}},
 		Turn:      &TurnTransport{Relay: "10.0.0.1:3478"},
 	}
-	out := sanitizeTransports(in)
+	out := sanitizeTransports(in, "1.2.3.4")
 	if out.EOS == nil || out.EOS.PUID != "0002abcdef0123456789abcdef012345" {
 		t.Errorf("eos = %+v", out.EOS)
 	}
-	if out.Iroh == nil || len(out.Iroh.Addrs) != 2 || out.Iroh.Relay == "" {
+	if out.Iroh == nil || len(out.Iroh.Addrs) != 1 || out.Iroh.Relay == "" {
 		t.Errorf("iroh = %+v", out.Iroh)
 	}
 	if out.Tailcat == nil {
@@ -72,7 +87,7 @@ func TestSanitizeTransports(t *testing.T) {
 	if out.Turn != nil {
 		t.Errorf("private turn relay accepted: %+v", out.Turn)
 	}
-	if sanitizeTransports(&Transports{EOS: &EOSTransport{PUID: "nope"}}) != nil {
+	if sanitizeTransports(&Transports{EOS: &EOSTransport{PUID: "nope"}}, "1.2.3.4") != nil {
 		t.Errorf("all-invalid transports should sanitize to nil")
 	}
 	lan := sanitizeLAN([]string{"192.168.1.5:37015", "8.8.8.8:1", "10.0.0.2:0", "172.16.0.1:37015"})
@@ -119,6 +134,17 @@ func TestTurnBrokerCaches(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected one mint, got %d", calls)
 	}
+	for port := 2; port <= 3; port++ {
+		if _, err := tb.Get("1.2.3.4:" + strconv.Itoa(37015+port)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tb.Get("1.2.3.4:37099"); err == nil {
+		t.Fatalf("per-IP TURN cap not enforced")
+	}
+	if _, err := tb.Get("5.6.7.8:37015"); err != nil {
+		t.Fatalf("other IPs must still get credentials: %v", err)
+	}
 }
 
 // fakeGameServer simulates an R1Delta server behind a port-restricted NAT:
@@ -146,6 +172,13 @@ func (f *fakeGameServer) loop(t *testing.T) {
 		pkt := buf[:n]
 		if kind, payload, ok := parseNatPacket(pkt); ok {
 			if kind == pktPunchRequest {
+				f.mu.Lock()
+				mac := hmac.New(sha256.New, f.token)
+				f.mu.Unlock()
+				mac.Write(payload[:22])
+				if len(payload) < 38 || !bytes.Equal(mac.Sum(nil)[:16], payload[22:38]) {
+					continue // not from the master
+				}
 				client, _ := readAddr4(payload[16:])
 				f.mu.Lock()
 				f.punchReq = append(f.punchReq, client)
@@ -324,5 +357,59 @@ func TestRendezvousEndToEnd(t *testing.T) {
 	cliConn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	if _, _, err := cliConn.ReadFromUDPAddrPort(buf); err == nil {
 		t.Fatalf("ticket accepted from an IP that did not request it")
+	}
+}
+
+func TestIdentitySigner(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &identitySigner{key: key}
+	tokHex, err := s.Sign(netip.MustParseAddr("203.0.113.9"), "iroh:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := hex.DecodeString(tokHex)
+	if len(tok) != 129 || string(tok[:4]) != "R1ID" || tok[4] != 1 {
+		t.Fatalf("bad token layout %x", tok)
+	}
+	if !bytes.Equal(tok[5:9], []byte{203, 0, 113, 9}) {
+		t.Fatalf("bad ip %v", tok[5:9])
+	}
+	exp := int64(binary.BigEndian.Uint64(tok[9:17]))
+	if d := exp - time.Now().Unix(); d < 200 || d > 400 {
+		t.Fatalf("unexpected expiry in %ds", d)
+	}
+	th := sha256.Sum256([]byte("iroh:abc"))
+	if !bytes.Equal(tok[33:65], th[:]) {
+		t.Fatalf("bad target hash")
+	}
+	digest := sha256.Sum256(tok[:65])
+	r := new(big.Int).SetBytes(tok[65:97])
+	sv := new(big.Int).SetBytes(tok[97:129])
+	if !ecdsa.Verify(&key.PublicKey, digest[:], r, sv) {
+		t.Fatalf("signature does not verify")
+	}
+	if _, err := s.Sign(netip.MustParseAddr("2001:db8::1"), "x"); err == nil {
+		t.Fatalf("IPv6 clients must be refused")
+	}
+
+	gin.SetMode(gin.TestMode)
+	ms := NewMasterServer()
+	ms.identity = s
+	r2 := gin.New()
+	r2.POST("/nat/attest", ms.HandleNatAttest)
+	req := httptest.NewRequest("POST", "/nat/attest", strings.NewReader(`{"target":"tailcat:tcXYZ"}`))
+	req.RemoteAddr = "198.51.100.4:1234"
+	w := httptest.NewRecorder()
+	r2.ServeHTTP(w, req)
+	var resp struct {
+		Identity string `json:"identity"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	tok, _ = hex.DecodeString(resp.Identity)
+	if w.Code != 200 || len(tok) != 129 || !bytes.Equal(tok[5:9], []byte{198, 51, 100, 4}) {
+		t.Fatalf("attest: %d %s", w.Code, w.Body.String())
 	}
 }

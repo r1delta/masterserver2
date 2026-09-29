@@ -16,7 +16,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/hmac"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -35,6 +39,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
 )
 
 // ---------- Wire format ----------
@@ -47,7 +52,7 @@ const (
 	pktSrvRegister  = 0x01 // server -> master: token[16]
 	pktRegisterAck  = 0x02 // master -> peer: observed ip[4] port[2] flags[1] (server ip[4] port[2] if flags&1)
 	pktCliRegister  = 0x03 // client -> master: ticket[16]
-	pktPunchRequest = 0x04 // master -> server: ticket[16] client ip[4] port[2]
+	pktPunchRequest = 0x04 // master -> server: ticket[16] client ip[4] port[2] mac[16]
 	pktPunch        = 0x05 // peer <-> peer: ticket[16] role[1]
 	pktPing         = 0x06 // client -> server (any transport): probe[8] time[8]
 	pktPong         = 0x07 // server -> client: probe[8] time[8] flags[1]
@@ -99,10 +104,16 @@ func encodeRegisterAck(observed netip.AddrPort, server *netip.AddrPort) []byte {
 	return b
 }
 
-func encodePunchRequest(ticket [16]byte, client netip.AddrPort) []byte {
+// encodePunchRequest authenticates the request with the server's
+// registration token (HMAC-SHA256, truncated to 16 bytes) so a spoofed source
+// address alone cannot make a game server punch at a third party.
+func encodePunchRequest(ticket [16]byte, client netip.AddrPort, serverToken [16]byte) []byte {
 	b := natHeader(pktPunchRequest)
 	b = append(b, ticket[:]...)
-	return appendAddr4(b, client)
+	b = appendAddr4(b, client)
+	mac := hmac.New(sha256.New, serverToken[:])
+	mac.Write(b[natHdrLen:])
+	return append(b, mac.Sum(nil)[:16]...)
 }
 
 // ---------- Advertised transports ----------
@@ -175,7 +186,9 @@ func parsePublicAddrPort(s string) (netip.AddrPort, error) {
 
 // sanitizeTransports drops anything malformed so that /servers only ever
 // republishes well-formed data. It never fails; bad entries are removed.
-func sanitizeTransports(t *Transports) *Transports {
+// heartbeatIP is the address the heartbeat came from; advertised iroh direct
+// addresses must be on it so clients are never pointed at third parties.
+func sanitizeTransports(t *Transports, heartbeatIP string) *Transports {
 	if t == nil {
 		return nil
 	}
@@ -199,7 +212,7 @@ func sanitizeTransports(t *Transports) *Transports {
 				if len(it.Addrs) >= maxListAddrs {
 					break
 				}
-				if ap, err := parsePublicAddrPort(a); err == nil {
+				if ap, err := parsePublicAddrPort(a); err == nil && ap.Addr().String() == heartbeatIP {
 					it.Addrs = append(it.Addrs, ap.String())
 				}
 			}
@@ -295,9 +308,10 @@ type Rendezvous struct {
 }
 
 const (
-	ticketTTL        = 30 * time.Second
-	mappingTTL       = 60 * time.Second
-	maxTicketsPerKey = 64
+	ticketTTL              = 30 * time.Second
+	mappingTTL             = 60 * time.Second
+	maxTicketsPerKey       = 64
+	maxTicketsPerRequester = 8
 )
 
 func newRendezvous(conn *net.UDPConn, publicAddr string) *Rendezvous {
@@ -401,14 +415,27 @@ func (rv *Rendezvous) Forget(serverKey string) {
 func (rv *Rendezvous) NewTicket(serverKey string, httpIP netip.Addr) ([16]byte, error) {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	n := 0
+	n, mine := 0, 0
+	var oldest *punchTicket
 	for _, t := range rv.tickets {
-		if t.serverKey == serverKey {
-			n++
+		if t.serverKey != serverKey {
+			continue
+		}
+		n++
+		if t.httpIP == httpIP.Unmap() {
+			mine++
+		}
+		if oldest == nil || t.created.Before(oldest.created) {
+			oldest = t
 		}
 	}
-	if n >= maxTicketsPerKey {
-		return [16]byte{}, errors.New("too many pending connection attempts for this server")
+	if mine >= maxTicketsPerRequester {
+		return [16]byte{}, errors.New("too many pending connection attempts")
+	}
+	// One requester flooding a server must not lock everyone else out:
+	// evict the oldest ticket rather than refusing new ones.
+	if n >= maxTicketsPerKey && oldest != nil {
+		delete(rv.tickets, oldest.id)
 	}
 	t := &punchTicket{serverKey: serverKey, httpIP: httpIP.Unmap(), created: time.Now(), acked: map[netip.AddrPort]bool{}}
 	crand.Read(t.id[:])
@@ -419,7 +446,19 @@ func (rv *Rendezvous) NewTicket(serverKey string, httpIP netip.Addr) ([16]byte, 
 // pushPunchRequest asks the server (through its registered mapping) to punch
 // towards / permit the client. It resends a few times until acknowledged.
 func (rv *Rendezvous) pushPunchRequest(ticket [16]byte, client netip.AddrPort) {
-	pkt := encodePunchRequest(ticket, client)
+	rv.mu.Lock()
+	t, ok := rv.tickets[ticket]
+	var token [16]byte
+	if ok {
+		if st := rv.byKey[t.serverKey]; st != nil {
+			token = st.token
+		}
+	}
+	rv.mu.Unlock()
+	if !ok {
+		return
+	}
+	pkt := encodePunchRequest(ticket, client, token)
 	go func() {
 		for _, delay := range []time.Duration{0, 250 * time.Millisecond, 500 * time.Millisecond, time.Second} {
 			time.Sleep(delay)
@@ -521,6 +560,11 @@ func (rv *Rendezvous) handle(from netip.AddrPort, pkt []byte) {
 		copy(token[:], payload[:16])
 		rv.mu.Lock()
 		key, known := rv.byToken[token]
+		// The mapping must belong to the host that sent the heartbeats, or a
+		// leaked token could point clients (and validation) anywhere.
+		if known && serverHost(key) != from.Addr().String() {
+			known = false
+		}
 		first := false
 		if known {
 			st := rv.byKey[key]
@@ -556,7 +600,7 @@ func (rv *Rendezvous) handle(from netip.AddrPort, pkt []byte) {
 		// Only accept the UDP endpoint if it comes from the same public IP
 		// that requested the ticket over HTTP; this stops a ticket being used
 		// to point a server's punch packets at a third party.
-		if t.httpIP.Is4() && t.httpIP != from.Addr() {
+		if !t.httpIP.Is4() || t.httpIP != from.Addr() {
 			rv.mu.Unlock()
 			return
 		}
@@ -615,18 +659,24 @@ type TurnCredentials struct {
 }
 
 type TurnBroker struct {
-	keyID    string
-	apiToken string
-	ttl      time.Duration
-	endpoint string // overridable for tests
-	client   *http.Client
+	keyID          string
+	apiToken       string
+	ttl            time.Duration
+	endpoint       string // overridable for tests
+	revokeEndpoint string // format: key id, username; "" disables revocation
+	client         *http.Client
 
 	mu        sync.Mutex
 	cache     map[string]*TurnCredentials // server key -> creds
 	mintTimes []time.Time                 // global mint rate limiting
 }
 
-const turnMintsPerMinute = 60
+const (
+	turnMintsPerMinute = 60
+	// A host may have several servers, but TURN credentials are relay
+	// bandwidth we pay for: cap how many distinct servers per IP get them.
+	turnServersPerIP = 3
+)
 
 func newTurnBrokerFromEnv() *TurnBroker {
 	keyID := os.Getenv("CF_TURN_KEY_ID")
@@ -644,26 +694,45 @@ func newTurnBrokerFromEnv() *TurnBroker {
 	// CF_TURN_API_URL overrides the credential endpoint (a format string
 	// taking the key id), e.g. for a self-hosted TURN credential service.
 	endpoint := os.Getenv("CF_TURN_API_URL")
+	revokeEndpoint := os.Getenv("CF_TURN_REVOKE_URL")
 	if endpoint == "" {
 		endpoint = "https://rtc.live.cloudflare.com/v1/turn/keys/%s/credentials/generate-ice-servers"
+		if revokeEndpoint == "" {
+			revokeEndpoint = "https://rtc.live.cloudflare.com/v1/turn/keys/%s/credentials/%s/revoke"
+		}
 	}
 	log.Printf("[NAT] Cloudflare TURN broker enabled (ttl %s)", ttl)
 	return &TurnBroker{
-		keyID:    keyID,
-		apiToken: token,
-		ttl:      ttl,
-		endpoint: endpoint,
-		client:   &http.Client{Timeout: 5 * time.Second},
-		cache:    make(map[string]*TurnCredentials),
+		keyID:          keyID,
+		apiToken:       token,
+		ttl:            ttl,
+		endpoint:       endpoint,
+		revokeEndpoint: revokeEndpoint,
+		client:         &http.Client{Timeout: 5 * time.Second},
+		cache:          make(map[string]*TurnCredentials),
 	}
 }
 
 // Get returns cached credentials for the server or mints new ones.
 func (tb *TurnBroker) Get(serverKey string) (*TurnCredentials, error) {
 	tb.mu.Lock()
-	if c, ok := tb.cache[serverKey]; ok && time.Until(time.Unix(c.Expires, 0)) > tb.ttl/4 {
+	cached, haveCached := tb.cache[serverKey]
+	if haveCached && time.Until(time.Unix(cached.Expires, 0)) > tb.ttl/4 {
 		tb.mu.Unlock()
-		return c, nil
+		return cached, nil
+	}
+	if !haveCached {
+		host := serverHost(serverKey)
+		n := 0
+		for k := range tb.cache {
+			if serverHost(k) == host {
+				n++
+			}
+		}
+		if n >= turnServersPerIP {
+			tb.mu.Unlock()
+			return nil, errors.New("too many relayed servers for this IP")
+		}
 	}
 	now := time.Now()
 	kept := tb.mintTimes[:0]
@@ -690,10 +759,48 @@ func (tb *TurnBroker) Get(serverKey string) (*TurnCredentials, error) {
 	return creds, nil
 }
 
+// Forget drops a server's cached credentials and revokes them at Cloudflare,
+// so credentials handed to a server that went away cannot keep relaying.
+func serverHost(serverKey string) string {
+	if ap, err := netip.ParseAddrPort(serverKey); err == nil {
+		return ap.Addr().String()
+	}
+	return serverKey
+}
+
+// Has reports whether credentials were issued to this server.
+func (tb *TurnBroker) Has(serverKey string) bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	_, ok := tb.cache[serverKey]
+	return ok
+}
+
 func (tb *TurnBroker) Forget(serverKey string) {
 	tb.mu.Lock()
+	creds := tb.cache[serverKey]
 	delete(tb.cache, serverKey)
 	tb.mu.Unlock()
+	if creds != nil && tb.revokeEndpoint != "" {
+		go tb.revoke(creds.Username)
+	}
+}
+
+func (tb *TurnBroker) revoke(username string) {
+	req, err := http.NewRequest("POST", fmt.Sprintf(tb.revokeEndpoint, tb.keyID, url.PathEscape(username)), nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+tb.apiToken)
+	resp, err := tb.client.Do(req)
+	if err != nil {
+		log.Printf("[NAT] TURN credential revoke failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		log.Printf("[NAT] TURN credential revoke returned %d", resp.StatusCode)
+	}
 }
 
 type iceServer struct {
@@ -782,6 +889,7 @@ type natConnectResponse struct {
 	LAN          []string     `json:"lan,omitempty"`
 	ClientIP     string       `json:"client_ip"`
 	P2P          bool         `json:"p2p"`
+	Identity     string       `json:"identity,omitempty"` // signed client IP for this server (see identitySigner)
 	Reach        Reachability `json:"reach"`
 	Transports   *Transports  `json:"transports,omitempty"`
 }
@@ -825,6 +933,11 @@ func (ms *MasterServer) HandleNatConnect(c *gin.Context) {
 		return
 	}
 	resp.ClientIP = clientIP.String()
+	if ms.identity != nil {
+		if token, err := ms.identity.Sign(clientIP, key); err == nil {
+			resp.Identity = token
+		}
+	}
 
 	if ms.rendezvous != nil {
 		ticket, err := ms.rendezvous.NewTicket(key, clientIP)
@@ -889,6 +1002,7 @@ type heartbeatResponse struct {
 	PublicIP   string           `json:"public_ip"`
 	Reach      Reachability     `json:"reach"`
 	Validated  bool             `json:"validated"`
+	Identity   bool             `json:"identity"` // clients get attested identities (servers may require them)
 	Turn       *TurnCredentials `json:"turn,omitempty"`
 }
 
@@ -921,4 +1035,104 @@ func (ms *MasterServer) onServerMapped(key string) {
 	ms.challenges[key] = time.Now()
 	ms.challengeMu.Unlock()
 	ms.PerformValidation(ip, port)
+}
+
+// ---------- Client identity attestation ----------
+//
+// Game servers reached through EOS, iroh, tailcat or TURN see fake peer
+// addresses, so IP bans could be dodged by switching transport. The master
+// therefore signs a short-lived statement "the client at IP X wants to talk
+// to server T" that the client presents over whatever route it picked; the
+// server checks it against the same public key the game already embeds for
+// server auth tokens and bans on X.
+//
+// Token (129 bytes, sent hex encoded over HTTP and raw inside R1NX IDENTIFY):
+//   "R1ID" | version=1 | client IPv4[4] | expires unix[8] | nonce[16] |
+//   SHA-256(target)[32] | ECDSA P-256 signature r[32] s[32] over SHA-256 of
+//   everything before it.
+// target is the server's listing key "ip:port", or "iroh:<endpoint id>",
+// "tailcat:<address>", "eos:<puid>" for servers reached by an overlay address.
+
+const identityTTL = 5 * time.Minute
+
+type identitySigner struct {
+	key *ecdsa.PrivateKey
+}
+
+// newIdentitySignerFromEnv loads ATTEST_KEY_FILE (default: the server-token
+// key JWT_PRIVATE_KEY_FILE / new_key.pem). Returns nil if unavailable.
+func newIdentitySignerFromEnv() *identitySigner {
+	path := os.Getenv("ATTEST_KEY_FILE")
+	if path == "" {
+		path = os.Getenv("JWT_PRIVATE_KEY_FILE")
+	}
+	if path == "" {
+		path = "new_key.pem"
+	}
+	pemBytes, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[NAT] Identity attestation disabled: cannot read %s: %v", path, err)
+		return nil
+	}
+	key, err := jwt.ParseECPrivateKeyFromPEM(pemBytes)
+	if err != nil || key.Curve != elliptic.P256() {
+		log.Printf("[NAT] Identity attestation disabled: %s is not a P-256 EC key (%v)", path, err)
+		return nil
+	}
+	log.Printf("[NAT] Identity attestation enabled (key %s)", path)
+	return &identitySigner{key: key}
+}
+
+func (s *identitySigner) Sign(client netip.Addr, target string) (string, error) {
+	client = client.Unmap()
+	if !client.Is4() {
+		return "", errors.New("identity tokens need an IPv4 client address")
+	}
+	payload := make([]byte, 0, 129)
+	payload = append(payload, "R1ID"...)
+	payload = append(payload, 1)
+	ip := client.As4()
+	payload = append(payload, ip[:]...)
+	payload = binary.BigEndian.AppendUint64(payload, uint64(time.Now().Add(identityTTL).Unix()))
+	nonce := make([]byte, 16)
+	crand.Read(nonce)
+	payload = append(payload, nonce...)
+	th := sha256.Sum256([]byte(target))
+	payload = append(payload, th[:]...)
+	digest := sha256.Sum256(payload)
+	r, sv, err := ecdsa.Sign(crand.Reader, s.key, digest[:])
+	if err != nil {
+		return "", err
+	}
+	payload = append(payload, r.FillBytes(make([]byte, 32))...)
+	payload = append(payload, sv.FillBytes(make([]byte, 32))...)
+	return hex.EncodeToString(payload), nil
+}
+
+// HandleNatAttest issues an identity token for a server the client reaches
+// by an overlay address rather than through the server list.
+// Endpoint: POST /nat/attest {"target": "iroh:<id>" | "tailcat:<addr>" | "eos:<puid>" | "ip:port"}
+func (ms *MasterServer) HandleNatAttest(c *gin.Context) {
+	if ms.identity == nil {
+		c.String(http.StatusServiceUnavailable, "identity attestation not configured")
+		return
+	}
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Target == "" || len(req.Target) > 1024 {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	clientIP, err := netip.ParseAddr(c.ClientIP())
+	if err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	token, err := ms.identity.Sign(clientIP, req.Target)
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"identity": token, "client_ip": clientIP.Unmap().String()})
 }

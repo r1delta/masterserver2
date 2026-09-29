@@ -46,6 +46,18 @@ server is listed if any path answers; `reach` records which ones did.
   `p2p`. It also pushes a permission-only punch request so a TURN-relayed
   server accepts the client right away.
 
+## Client identities (cross-transport IP bans)
+
+`/nat/connect` also returns `identity`, and `POST /nat/attest
+{"target": "iroh:<id>" | "tailcat:<addr>" | "eos:<puid>" | "ip:port"}` returns
+one for servers reached by an overlay address. The token (129 bytes, hex) binds
+the requesting client's IPv4 to the SHA-256 of the target, expires after 5
+minutes and is ECDSA P-256 signed with `ATTEST_KEY_FILE` (default: the
+server-token key `JWT_PRIVATE_KEY_FILE` / `new_key.pem`, whose public key the
+game already embeds). Game servers verify it and ban on the attested IP; the
+heartbeat reply carries `"identity": true` so servers know to require it.
+Layout and server-side rules: `r1delta/p2p/p2p_identity.h`.
+
 ## UDP rendezvous
 
 A UDP socket (default `:37999`) handles the `R1NX` control packets: server
@@ -63,6 +75,12 @@ it) and punch requests/acks towards servers. Packet formats are documented in
 | `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN` | unset | Cloudflare Realtime TURN key; TURN is disabled without them |
 | `CF_TURN_TTL` | `43200` | Credential lifetime in seconds (cached per server, re-minted with < 1/4 left) |
 | `CF_TURN_API_URL` | Cloudflare `generate-ice-servers` URL | Override (format string taking the key id), e.g. for a self-hosted TURN credential service |
+| `CF_TURN_REVOKE_URL` | Cloudflare revoke URL (only when `CF_TURN_API_URL` is unset) | Format string (key id, username) used to revoke a delisted server's credentials |
+| `ATTEST_KEY_FILE` | `JWT_PRIVATE_KEY_FILE` or `new_key.pem` | P-256 key signing client identity tokens; identities are disabled if it cannot be read |
+
+TURN credentials never go to clients: only servers that failed direct
+validation get them, at most three servers per IP, and they are revoked when
+the server leaves the list. The Cloudflare API token stays in this process.
 
 The rendezvous port must be reachable over UDP from the internet (open it in
 the firewall next to the HTTP port).

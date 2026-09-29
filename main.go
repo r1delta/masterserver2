@@ -84,6 +84,7 @@ type ServerEntry struct {
 	P2P         bool         `json:"p2p"`                  // Server understands R1NX pings / hole punching (sent a "nat" object)
 	LAN         []string     `json:"-"`                    // Private addresses, only handed to same-public-IP clients
 	WantTurn    bool         `json:"-"`
+	TurnRelay   string       `json:"-"` // relay reported by the server; published once validated through it
 	ValidationAttempted bool `json:"-"`
 }
 
@@ -138,9 +139,11 @@ type MasterServer struct {
 	limiterMu  sync.Mutex
 	serversMu  sync.RWMutex
 	challengeMu sync.Mutex
+	validating  map[string]bool // keys with a validation in flight (guarded by challengeMu)
 
-	rendezvous *Rendezvous // nil when the UDP rendezvous is disabled
-	turn       *TurnBroker // nil when Cloudflare TURN is not configured
+	rendezvous *Rendezvous      // nil when the UDP rendezvous is disabled
+	turn       *TurnBroker      // nil when Cloudflare TURN is not configured
+	identity   *identitySigner  // nil when no attestation key is available
 }
 
 // determineRegionCode maps a GeoIP “City” record to one of the 5-letter codes.
@@ -1039,11 +1042,26 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		// Preserve existing validation status if server already exists, otherwise default to false.
         // If a server stops heartbeating and is removed, the next heartbeat is treated as new (Validated: false).
 		Validated:   serverExists && existingEntry.Validated,
-		Transports:  sanitizeTransports(heartbeat.Transports),
+		Transports:  sanitizeTransports(heartbeat.Transports, ip),
 	}
 	if serverExists {
 		entry.Reach = existingEntry.Reach
 		entry.ValidationAttempted = existingEntry.ValidationAttempted
+	}
+	// A TURN relay is only accepted from servers we issued credentials to, and
+	// only published once validation reached the server through it.
+	relayChanged := false
+	if entry.Transports != nil && entry.Transports.Turn != nil {
+		relay := entry.Transports.Turn.Relay
+		entry.Transports.Turn = nil
+		if ms.turn != nil && ms.turn.Has(key) {
+			entry.TurnRelay = relay
+			if serverExists && existingEntry.TurnRelay == relay && existingEntry.Reach.Turn {
+				entry.Transports.Turn = &TurnTransport{Relay: relay}
+			} else {
+				relayChanged = !serverExists || existingEntry.TurnRelay != relay
+			}
+		}
 	}
 	if heartbeat.Nat != nil {
 		entry.P2P = true
@@ -1074,6 +1092,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
     //    This check ensures we periodically re-validate even validated servers, but not too often.
     needsChallenge := !serverExists ||
                       !entry.Validated ||
+                      relayChanged ||
                       (entry.Validated && (!challengeAttemptedRecently || time.Since(lastChallengeTime) > ChallengeInterval))
 
 
@@ -1097,8 +1116,12 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		PublicIP:  ip,
 		Reach:     entry.Reach,
 		Validated: entry.Validated,
+		Identity:  ms.identity != nil,
 	}
-	wantTurn := entry.WantTurn && entry.ValidationAttempted && !entry.Reach.Direct
+	// TURN bandwidth is only spent on servers that proved a real game socket
+	// through the rendezvous (or already through their relay) and cannot be
+	// reached directly.
+	wantTurn := entry.WantTurn && !entry.Reach.Direct && (entry.Reach.Punch || entry.Reach.Turn)
 	ms.serversMu.Unlock()
 	unlocked = true
 
@@ -1127,11 +1150,26 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 	log.Printf("[Validation] Starting validation for %s", key) // Log key
 
     // Check if the server entry still exists in the map. It might have been removed by cleanup.
+	// One validation per server at a time: overlapping runs would race on
+	// the rendezvous socket and the loser could unlist a reachable server.
+	ms.challengeMu.Lock()
+	if ms.validating[key] {
+		ms.challengeMu.Unlock()
+		return
+	}
+	ms.validating[key] = true
+	ms.challengeMu.Unlock()
+	defer func() {
+		ms.challengeMu.Lock()
+		delete(ms.validating, key)
+		ms.challengeMu.Unlock()
+	}()
+
     ms.serversMu.RLock()
     entry, exists := ms.servers[key]
     var turnRelay string
-    if exists && entry.Transports != nil && entry.Transports.Turn != nil {
-        turnRelay = entry.Transports.Turn.Relay
+    if exists {
+        turnRelay = entry.TurnRelay
     }
     ms.serversMu.RUnlock()
     if !exists {
@@ -1175,6 +1213,12 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 	server.Validated = valid
 	server.Reach = reach
 	server.ValidationAttempted = true
+	if reach.Turn && server.TurnRelay == turnRelay && turnRelay != "" {
+		if server.Transports == nil {
+			server.Transports = &Transports{}
+		}
+		server.Transports.Turn = &TurnTransport{Relay: turnRelay}
+	}
 }
 
 // challengeDirect sends the connect challenge straight to the listed address.
@@ -1454,6 +1498,7 @@ func NewMasterServer() *MasterServer {
 	return &MasterServer{
 		servers:        make(map[string]*ServerEntry),
 		challenges:     make(map[string]time.Time),
+		validating:     make(map[string]bool),
 		// lastHeartbeats map is effectively replaced by ServerEntry.LastUpdated
 		limiters:       make(map[string]*rate.Limiter),
         // DB and GeoIP are set after creation in main
@@ -1584,6 +1629,7 @@ func main() {
 	// NAT traversal helpers (UDP rendezvous + optional Cloudflare TURN broker).
 	ms.rendezvous = startRendezvous()
 	ms.turn = newTurnBrokerFromEnv()
+	ms.identity = newIdentitySignerFromEnv()
 	if ms.rendezvous != nil {
 		ms.rendezvous.onMapped = ms.onServerMapped
 	}
@@ -1621,6 +1667,7 @@ func main() {
 	r.GET("/servers", ms.GetServers)
 	r.GET("/players",ms.GetPlayerCount)
 	r.POST("/nat/connect", ms.HandleNatConnect) // CLIENT asks for a punch ticket + a server's transports
+	r.POST("/nat/attest", ms.HandleNatAttest)   // CLIENT asks for an identity token for an overlay address
 
 	// Discord/Auth endpoints
 	r.GET("/discord-auth", ms.HandleDiscordAuth) // CLIENT OAuth2 callback handler (No MS_TOKEN)
