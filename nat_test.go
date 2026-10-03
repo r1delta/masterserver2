@@ -96,6 +96,19 @@ func TestSanitizeTransports(t *testing.T) {
 	}
 }
 
+func TestRendezvousRejectsUnusableAdvertisedAddress(t *testing.T) {
+	t.Setenv("RENDEZVOUS_LISTEN", "127.0.0.1:0")
+	for _, public := range []string{"not-an-address", "203.0.113.10:0", "[2001:db8::1]:37999", "0.0.0.0:37999"} {
+		t.Run(public, func(t *testing.T) {
+			t.Setenv("RENDEZVOUS_PUBLIC_ADDR", public)
+			if rv := startRendezvous(); rv != nil {
+				rv.conn.Close()
+				t.Fatalf("rendezvous advertised unusable endpoint %q", public)
+			}
+		})
+	}
+}
+
 func TestParseCloudflareICE(t *testing.T) {
 	arrayShape := `{"iceServers":[{"urls":["stun:stun.cloudflare.com:3478"]},{"urls":["turn:turn.cloudflare.com:3478?transport=udp","turn:turn.cloudflare.com:3478?transport=tcp","turns:turn.cloudflare.com:5349?transport=tcp"],"username":"u","credential":"c"}]}`
 	c, err := parseCloudflareICE(strings.NewReader(arrayShape), time.Hour)

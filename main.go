@@ -45,47 +45,46 @@ const (
 	RegionOCE = "[Ocean]" // Oceania
 	RegionMEA = "[MEast]" // Middle East
 	RegionAFR = "[Afric]" // Africa
-	RegionLOC = "[LOCAL]"  // Private / loopback IPs detected by master server
-	RegionUNK = "[UNKNW]"  // Unknown or GeoIP failed
+	RegionLOC = "[LOCAL]" // Private / loopback IPs detected by master server
+	RegionUNK = "[UNKNW]" // Unknown or GeoIP failed
 )
 
 // longitude cut-offs (refined)
 const (
 	naWestCut    = -105.0 // < −105 → West
-	naCentralCut =  -90.0 // −105..−90 → Central ; ≥ −90 → East
-	euWestCut    =   20.0 // < 20 E → EU-West
+	naCentralCut = -90.0  // −105..−90 → Central ; ≥ −90 → East
+	euWestCut    = 20.0   // < 20 E → EU-West
 )
 
 // pre-compiled once for prefix-strip: [[XXXXX]]␠
 var stripPrefix = regexp.MustCompile(`^\[[A-Z]{2,5}\]\s`)
 
-
 // ServerEntry holds info about a registered game server.
 type ServerEntry struct {
-	HostName    string       `json:"host_name"`
-	MapName     string       `json:"map_name"`
-	GameMode    string       `json:"game_mode"`
-	MaxPlayers  int          `json:"max_players"`
-	Description string       `json:"description"`
-	Playlist    string       `json:"playlist"`
-	PlaylistDisplayName string `json:"playlist_display_name"`
-	HasPassword bool         `json:"has_password"`
-	TotalPlayers int         `json:"total_players"`
-	HasAuth 	  bool         `json:"has_auth"`
-	IP          string       `json:"ip"`
-	Version     string       `json:"version"` // Added Version field
-	Port        int          `json:"port"`
-	Players     []PlayerInfo `json:"players"`
-	LastUpdated time.Time    `json:"-"` // Exclude from JSON
-	Validated   bool         `json:"validated"`
+	HostName            string       `json:"host_name"`
+	MapName             string       `json:"map_name"`
+	GameMode            string       `json:"game_mode"`
+	MaxPlayers          int          `json:"max_players"`
+	Description         string       `json:"description"`
+	Playlist            string       `json:"playlist"`
+	PlaylistDisplayName string       `json:"playlist_display_name"`
+	HasPassword         bool         `json:"has_password"`
+	TotalPlayers        int          `json:"total_players"`
+	HasAuth             bool         `json:"has_auth"`
+	IP                  string       `json:"ip"`
+	Version             string       `json:"version"` // Added Version field
+	Port                int          `json:"port"`
+	Players             []PlayerInfo `json:"players"`
+	LastUpdated         time.Time    `json:"-"` // Exclude from JSON
+	Validated           bool         `json:"validated"`
 	// NAT traversal (see nat.go)
-	Transports  *Transports  `json:"transports,omitempty"` // Alternative transports advertised by the server
-	Reach       Reachability `json:"reach"`                // Which paths validation succeeded through
-	P2P         bool         `json:"p2p"`                  // Server understands R1NX pings / hole punching (sent a "nat" object)
-	LAN         []string     `json:"-"`                    // Private addresses, only handed to same-public-IP clients
-	WantTurn    bool         `json:"-"`
-	TurnRelay   string       `json:"-"` // relay reported by the server; published once validated through it
-	ValidationAttempted bool `json:"-"`
+	Transports          *Transports  `json:"transports,omitempty"` // Alternative transports advertised by the server
+	Reach               Reachability `json:"reach"`                // Which paths validation succeeded through
+	P2P                 bool         `json:"p2p"`                  // Server understands R1NX pings / hole punching (sent a "nat" object)
+	LAN                 []string     `json:"-"`                    // Private addresses, only handed to same-public-IP clients
+	WantTurn            bool         `json:"-"`
+	TurnRelay           string       `json:"-"` // relay reported by the server; published once validated through it
+	ValidationAttempted bool         `json:"-"`
 }
 
 // PlayerInfo represents a player on the game server.
@@ -99,9 +98,9 @@ type PlayerInfo struct {
 // DiscordAuthPayload is used for Discord authentication endpoints (primarily bot sync).
 type DiscordAuthPayload struct {
 	DiscordId   string `json:"discord_id"`
-	Username    string `json:"username"` // Discord username (e.g., "pomelo_name")
+	Username    string `json:"username"`     // Discord username (e.g., "pomelo_name")
 	DisplayName string `json:"display_name"` // Global display name (e.g., "Pomelo")
-	PomeloName  string `json:"pomelo_name"` // Deprecated username format (e.g., "Pomelo#1234") - Use Username/DisplayName
+	PomeloName  string `json:"pomelo_name"`  // Deprecated username format (e.g., "Pomelo#1234") - Use Username/DisplayName
 }
 
 // isValidMapName returns true if the given map name is valid.
@@ -135,84 +134,83 @@ type MasterServer struct {
 	geoip          *geoip2.Reader
 
 	// Per-IP rate limiters (keyed by client IP)
-	limiters   map[string]*rate.Limiter
-	limiterMu  sync.Mutex
-	serversMu  sync.RWMutex
+	limiters    map[string]*rate.Limiter
+	limiterMu   sync.Mutex
+	serversMu   sync.RWMutex
 	challengeMu sync.Mutex
 	validating  map[string]bool // keys with a validation in flight (guarded by challengeMu)
 
-	rendezvous *Rendezvous      // nil when the UDP rendezvous is disabled
-	turn       *TurnBroker      // nil when Cloudflare TURN is not configured
-	identity   *identitySigner  // nil when no attestation key is available
+	rendezvous *Rendezvous     // nil when the UDP rendezvous is disabled
+	turn       *TurnBroker     // nil when Cloudflare TURN is not configured
+	identity   *identitySigner // nil when no attestation key is available
 }
 
 // determineRegionCode maps a GeoIP “City” record to one of the 5-letter codes.
 func determineRegionCode(rec *geoip2.City) string {
 	// Check if rec is nil or if Continent data exists via Code
 	// Fix: rec.Continent is a struct, cannot compare to nil. Check Code field.
-	if rec == nil || rec.Continent.Code == "" { return RegionUNK }
+	if rec == nil || rec.Continent.Code == "" {
+		return RegionUNK
+	}
 
 	cc := rec.Country.IsoCode
 
+	return "[" + cc + "]" // just put the country code in the bag wagie
+	/*
+		// Fix: Location is a non-pointer struct. Check if its data is meaningful, not if the struct itself is nil.
+		// Declare variables before checking for location data.
+		var lon float64
+		// Check if Location data is meaningful (e.g., non-zero lat/lon)
+		hasLoc := rec.Location.Latitude != 0 || rec.Location.Longitude != 0
 
-	return "["+cc+"]"; // just put the country code in the bag wagie
-/*
-	// Fix: Location is a non-pointer struct. Check if its data is meaningful, not if the struct itself is nil.
-	// Declare variables before checking for location data.
-	var lon float64
-	// Check if Location data is meaningful (e.g., non-zero lat/lon)
-	hasLoc := rec.Location.Latitude != 0 || rec.Location.Longitude != 0
- 
-	if hasLoc {
-		//lon = rec.Location.Longitude
-	} else {
-		// If no location data, lon remains its zero value (0.0).
-		// The code below relies on the `!hasLoc` checks within the NA/EU cases
-		// to default the region if location data is missing. This is fine.
-	}
-	// country overrides (fast path) - these don't typically depend on longitude
-	if cc == "RU"      { return RegionRUS }
-	if _, ok := map[string]struct{}{
-		"BZ":{}, "CR":{}, "SV":{}, "GT":{}, "HN":{}, "NI":{}, "PA":{}, "MX":{},
-	}[cc]; ok { return RegionCAM }
-	if _, ok := map[string]struct{}{
-		"AE":{}, "BH":{}, "CY":{}, "EG":{}, "IR":{}, "IQ":{}, "IL":{}, "JO":{},
-		"KW":{}, "LB":{}, "OM":{}, "PS":{}, "QA":{}, "SA":{}, "SY":{}, "TR":{}, "YE":{},
-	}[cc]; ok { return RegionMEA }
-	if _, ok := map[string]struct{}{
-		"AF":{}, "BD":{}, "BT":{}, "IN":{}, "MV":{}, "NP":{}, "PK":{}, "LK":{},
-	}[cc]; ok { return RegionASS }
-	if _, ok := map[string]struct{}{
-		"BN":{}, "KH":{}, "ID":{}, "LA":{}, "MY":{}, "MM":{}, "PH":{}, "SG":{},
-		"TH":{}, "TL":{}, "VN":{},
-	}[cc]; ok { return RegionAEA }
-
-	switch rec.Continent.Code {
-	case "NA":
-		if !hasLoc { return RegionNAE } // Default NA region if no detailed location
-		switch { // Use the calculated 'lon' here
-		case lon < naWestCut:    return RegionNAW
-		case lon < naCentralCut: return RegionNAC
-		default:                 return RegionNAE
+		if hasLoc {
+			//lon = rec.Location.Longitude
+		} else {
+			// If no location data, lon remains its zero value (0.0).
+			// The code below relies on the `!hasLoc` checks within the NA/EU cases
+			// to default the region if location data is missing. This is fine.
 		}
-	case "EU":
-		if !hasLoc { return RegionEWE } // Default EU region if no detailed location
-		if lon < euWestCut { return RegionEWE } // Use the calculated 'lon' here
-		return RegionEEE
-	case "AS":
-		return RegionASE // defaults; sub-regions handled earlier
-	case "SA":
-		return RegionSAM
-	case "AF":
-		return RegionAFR
-	case "OC":
-		return RegionOCE
-	default:
-		return RegionUNK
-	}*/
+		// country overrides (fast path) - these don't typically depend on longitude
+		if cc == "RU"      { return RegionRUS }
+		if _, ok := map[string]struct{}{
+			"BZ":{}, "CR":{}, "SV":{}, "GT":{}, "HN":{}, "NI":{}, "PA":{}, "MX":{},
+		}[cc]; ok { return RegionCAM }
+		if _, ok := map[string]struct{}{
+			"AE":{}, "BH":{}, "CY":{}, "EG":{}, "IR":{}, "IQ":{}, "IL":{}, "JO":{},
+			"KW":{}, "LB":{}, "OM":{}, "PS":{}, "QA":{}, "SA":{}, "SY":{}, "TR":{}, "YE":{},
+		}[cc]; ok { return RegionMEA }
+		if _, ok := map[string]struct{}{
+			"AF":{}, "BD":{}, "BT":{}, "IN":{}, "MV":{}, "NP":{}, "PK":{}, "LK":{},
+		}[cc]; ok { return RegionASS }
+		if _, ok := map[string]struct{}{
+			"BN":{}, "KH":{}, "ID":{}, "LA":{}, "MY":{}, "MM":{}, "PH":{}, "SG":{},
+			"TH":{}, "TL":{}, "VN":{},
+		}[cc]; ok { return RegionAEA }
+
+		switch rec.Continent.Code {
+		case "NA":
+			if !hasLoc { return RegionNAE } // Default NA region if no detailed location
+			switch { // Use the calculated 'lon' here
+			case lon < naWestCut:    return RegionNAW
+			case lon < naCentralCut: return RegionNAC
+			default:                 return RegionNAE
+			}
+		case "EU":
+			if !hasLoc { return RegionEWE } // Default EU region if no detailed location
+			if lon < euWestCut { return RegionEWE } // Use the calculated 'lon' here
+			return RegionEEE
+		case "AS":
+			return RegionASE // defaults; sub-regions handled earlier
+		case "SA":
+			return RegionSAM
+		case "AF":
+			return RegionAFR
+		case "OC":
+			return RegionOCE
+		default:
+			return RegionUNK
+		}*/
 }
-
-
 
 // getLimiter returns a rate limiter for the given IP (creating one if needed).
 func (ms *MasterServer) getLimiter(ip string) *rate.Limiter {
@@ -287,12 +285,12 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
 	row := ms.db.QueryRow("SELECT discord_id, username, display_name, pomelo_name FROM discord_auth WHERE token = ?", permanentAuthToken)
 	if err := row.Scan(&discordId, &username, &displayName, &pomeloName); err != nil {
 		if err == sql.ErrNoRows {
-             log.Printf("Permanent master token not found or invalid from %s", c.ClientIP())
-             c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid permanent auth token"})
-        } else {
-            log.Printf("Failed to query permanent token from database: %v", err)
-            c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "An error occurred"})
-        }
+			log.Printf("Permanent master token not found or invalid from %s", c.ClientIP())
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid permanent auth token"})
+		} else {
+			log.Printf("Failed to query permanent token from database: %v", err)
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "An error occurred"})
+		}
 		return
 	}
 
@@ -321,11 +319,11 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
 	// Create a short-lived server auth token.
 	// Claims structure seen in C++: "di", "dn", "p", "e", "s"
 	tokenClaims := jwt.MapClaims{
-		"di":   discordId, // Discord User ID
-		"dn": displayName, // Discord Global Display Name
-		"p":  pomeloName,  // Discord Old Username format (if needed by client)
-		"s":    server.IP, // Server's public IP provided in the request body
-		"e":          time.Now().Add(5 * time.Minute).Unix(), // Expiration (5 minutes)
+		"di": discordId,                              // Discord User ID
+		"dn": displayName,                            // Discord Global Display Name
+		"p":  pomeloName,                             // Discord Old Username format (if needed by client)
+		"s":  server.IP,                              // Server's public IP provided in the request body
+		"e":  time.Now().Add(5 * time.Minute).Unix(), // Expiration (5 minutes)
 	}
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodES256, tokenClaims)
 	serverAuthToken, err := jwtToken.SignedString(privateKey)
@@ -337,11 +335,11 @@ func (ms *MasterServer) HandlePerServerToken(c *gin.Context) {
 
 	// Return the short-lived server auth token and associated user info.
 	c.JSON(http.StatusOK, gin.H{
-		"token":      serverAuthToken, // The short-lived token
-		"discord_id": discordId,
-		"username":   displayName, // Return display_name as "username" for compatibility with C++? Or username from DB? C++ uses "dn" claim which is displayName. Let's use displayName.
+		"token":        serverAuthToken, // The short-lived token
+		"discord_id":   discordId,
+		"username":     displayName, // Return display_name as "username" for compatibility with C++? Or username from DB? C++ uses "dn" claim which is displayName. Let's use displayName.
 		"display_name": displayName, // Explicitly add display_name
-		"pomelo_name": pomeloName,
+		"pomelo_name":  pomeloName,
 	})
 }
 
@@ -359,7 +357,6 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
 	log.Printf("Discord auth code received: %s (from %s)", token, c.ClientIP())
 
-	
 	// Get user info from Discord using the access token.
 	req, err := http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
 	if err != nil {
@@ -383,9 +380,9 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 
 	var userResponse struct {
 		ID            string `json:"id"`
-		Username      string `json:"username"`       // New username (pomelo_name replacement)
-		GlobalName    string `json:"global_name"`    // Global display name
-		Discriminator string `json:"discriminator"`  // Old discriminator (may be "0")
+		Username      string `json:"username"`      // New username (pomelo_name replacement)
+		GlobalName    string `json:"global_name"`   // Global display name
+		Discriminator string `json:"discriminator"` // Old discriminator (may be "0")
 		Avatar        string `json:"avatar"`
 		// Add other fields if needed
 	}
@@ -395,17 +392,16 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 		return
 	}
 
-    // Determine display name and pomelo name (for backward compatibility)
-    displayName := userResponse.GlobalName // Discord's Global Name
-    if displayName == "" {
-        displayName = userResponse.Username // Fallback to new username
-    }
-    // Simulate old pomelo_name#discriminator format if needed
-    pomeloName := userResponse.Username // Start with new username
-    if userResponse.Discriminator != "0" && userResponse.Discriminator != "" {
-        pomeloName = fmt.Sprintf("%s#%s", userResponse.Username, userResponse.Discriminator)
-    }
-
+	// Determine display name and pomelo name (for backward compatibility)
+	displayName := userResponse.GlobalName // Discord's Global Name
+	if displayName == "" {
+		displayName = userResponse.Username // Fallback to new username
+	}
+	// Simulate old pomelo_name#discriminator format if needed
+	pomeloName := userResponse.Username // Start with new username
+	if userResponse.Discriminator != "0" && userResponse.Discriminator != "" {
+		pomeloName = fmt.Sprintf("%s#%s", userResponse.Username, userResponse.Discriminator)
+	}
 
 	// Check if record already exists for this discord_id.
 	var existingToken string
@@ -413,24 +409,24 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	err = ms.db.QueryRow("SELECT token, username, display_name, pomelo_name FROM discord_auth WHERE discord_id = ?", userResponse.ID).Scan(&existingToken, &existingUsername, &existingDisplayName, &existingPomeloName)
 
 	if err == nil {
-        // Record exists. Update username, display_name, and pomelo_name if they changed.
-        // This also ensures the latest names from Discord are in our DB.
-        _, err = ms.db.Exec("UPDATE discord_auth SET username = ?, display_name = ?, pomelo_name = ? WHERE discord_id = ?",
-            userResponse.Username, displayName, pomeloName, userResponse.ID)
-        if err != nil {
-             log.Printf("Failed to update discord_auth for existing user %s (%s) during auth: %v", userResponse.ID, userResponse.Username, err)
-             // Log error but proceed, client still gets the existing token
-        } else {
-            log.Printf("Updated discord_auth for existing user %s (%s) during auth.", userResponse.ID, userResponse.Username)
-        }
+		// Record exists. Update username, display_name, and pomelo_name if they changed.
+		// This also ensures the latest names from Discord are in our DB.
+		_, err = ms.db.Exec("UPDATE discord_auth SET username = ?, display_name = ?, pomelo_name = ? WHERE discord_id = ?",
+			userResponse.Username, displayName, pomeloName, userResponse.ID)
+		if err != nil {
+			log.Printf("Failed to update discord_auth for existing user %s (%s) during auth: %v", userResponse.ID, userResponse.Username, err)
+			// Log error but proceed, client still gets the existing token
+		} else {
+			log.Printf("Updated discord_auth for existing user %s (%s) during auth.", userResponse.ID, userResponse.Username)
+		}
 		// Return the existing token and the latest user info from DB/Discord
 		c.JSON(http.StatusOK, gin.H{
-            "token": existingToken, // Return existing permanent token
-            "discord_id": userResponse.ID,
-            "username": userResponse.Username, // Return Discord's new username
-            "display_name": displayName, // Return determined display name
-            "pomelo_name": pomeloName, // Return determined pomelo name (old format)
-        })
+			"token":        existingToken, // Return existing permanent token
+			"discord_id":   userResponse.ID,
+			"username":     userResponse.Username, // Return Discord's new username
+			"display_name": displayName,           // Return determined display name
+			"pomelo_name":  pomeloName,            // Return determined pomelo name (old format)
+		})
 		return
 	} else if err != sql.ErrNoRows {
 		log.Printf("Database error when querying discord_auth for %s (%s): %v", userResponse.ID, userResponse.Username, err)
@@ -439,50 +435,50 @@ func (ms *MasterServer) HandleDiscordAuth(c *gin.Context) {
 	}
 
 	// If err is sql.ErrNoRows, the user is not in our `discord_auth` table.
-    // Create a new entry and a new permanent token (HS256).
-    log.Printf("Registering new user %s (%s) via OAuth flow.", userResponse.ID, userResponse.Username)
+	// Create a new entry and a new permanent token (HS256).
+	log.Printf("Registering new user %s (%s) via OAuth flow.", userResponse.ID, userResponse.Username)
 
-    jwtSecret := os.Getenv("JWT_DISCORD_SECRET")
-    if jwtSecret == "" {
-        log.Fatalf("JWT_DISCORD_SECRET environment variable not set") // Critical error
-        c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
-        return
-    }
+	jwtSecret := os.Getenv("JWT_DISCORD_SECRET")
+	if jwtSecret == "" {
+		log.Fatalf("JWT_DISCORD_SECRET environment variable not set") // Critical error
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
+		return
+	}
 
-    // Create a new permanent master auth token (signed with HS256).
-    tkn := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "discord_id":   userResponse.ID,
-        "username":     userResponse.Username,
-        "display_name": displayName,
-        "pomelo_name":  pomeloName,
-        // Permanent token doesn't expire according to C++ comment
-    })
-    permanentToken, err := tkn.SignedString([]byte(jwtSecret))
-    if err != nil {
-        log.Printf("Failed to create permanent master auth token for %s (%s): %v", userResponse.ID, userResponse.Username, err)
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
-    }
+	// Create a new permanent master auth token (signed with HS256).
+	tkn := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"discord_id":   userResponse.ID,
+		"username":     userResponse.Username,
+		"display_name": displayName,
+		"pomelo_name":  pomeloName,
+		// Permanent token doesn't expire according to C++ comment
+	})
+	permanentToken, err := tkn.SignedString([]byte(jwtSecret))
+	if err != nil {
+		log.Printf("Failed to create permanent master auth token for %s (%s): %v", userResponse.ID, userResponse.Username, err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
 
-    // Insert the new user record into the database.
-    _, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token, display_name, pomelo_name) VALUES (?, ?, ?, ?, ?)",
-        userResponse.ID, userResponse.Username, permanentToken, displayName, pomeloName)
-    if err != nil {
-        log.Printf("Failed to store new user record in database for %s (%s): %v", userResponse.ID, userResponse.Username, err)
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
-    }
+	// Insert the new user record into the database.
+	_, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token, display_name, pomelo_name) VALUES (?, ?, ?, ?, ?)",
+		userResponse.ID, userResponse.Username, permanentToken, displayName, pomeloName)
+	if err != nil {
+		log.Printf("Failed to store new user record in database for %s (%s): %v", userResponse.ID, userResponse.Username, err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
 
-    log.Printf("Successfully registered and issued token for user %s (%s).", userResponse.ID, userResponse.Username)
+	log.Printf("Successfully registered and issued token for user %s (%s).", userResponse.ID, userResponse.Username)
 
 	// Return the new permanent token and Discord access token.
 	c.JSON(http.StatusOK, gin.H{
-        "token": permanentToken, // The new permanent master token
-        "discord_id": userResponse.ID,
-        "username": userResponse.Username, // Return Discord's new username
-        "display_name": displayName, // Return determined display name
-        "pomelo_name": pomeloName, // Return determined pomelo name (old format)
-    })
+		"token":        permanentToken, // The new permanent master token
+		"discord_id":   userResponse.ID,
+		"username":     userResponse.Username, // Return Discord's new username
+		"display_name": displayName,           // Return determined display name
+		"pomelo_name":  pomeloName,            // Return determined pomelo name (old format)
+	})
 }
 
 // HandleUser returns user info for a given permanent master auth token.
@@ -520,10 +516,10 @@ func (ms *MasterServer) HandleUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"discord_id":  discordId,
-		"username":    username,     // Return Discord's new username
+		"discord_id":   discordId,
+		"username":     username,    // Return Discord's new username
 		"display_name": displayName, // Return Global Display Name
-		"pomelo_name": pomeloName,  // Return old username format
+		"pomelo_name":  pomeloName,  // Return old username format
 	})
 }
 
@@ -567,8 +563,8 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
 	jwtSecret := os.Getenv("JWT_DISCORD_SECRET")
 	if jwtSecret == "" {
 		log.Fatalf("JWT_DISCORD_SECRET environment variable not set") // Critical error
-        c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
-        return
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
+		return
 	}
 
 	// Use a transaction for batch inserts/updates
@@ -607,7 +603,7 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
 	}
 	defer selectStmt.Close()
 
-    processedCount := 0
+	processedCount := 0
 
 	for _, p := range payload {
 		if p.DiscordId == "" || p.Username == "" { // Username is required for registration
@@ -619,50 +615,50 @@ func (ms *MasterServer) HandleDiscordAuthChunk(c *gin.Context) {
 		err := selectStmt.QueryRow(p.DiscordId).Scan(&exists)
 
 		if err != nil && err != sql.ErrNoRows {
-            log.Printf("Database error querying discord_auth for %s: %v", p.DiscordId, err)
-            continue // Log error and continue with the next payload
+			log.Printf("Database error querying discord_auth for %s: %v", p.DiscordId, err)
+			continue // Log error and continue with the next payload
 		}
 
 		// Fix: Declare 'token' variable outside the conditional blocks so it's in scope for line 677 (and 682).
 		var token string
 
-        if err == sql.ErrNoRows {
-            // Record does not exist, create a new one.
-            log.Printf("Bot sync registering new user: %s (%s)", p.DiscordId, p.Username)
+		if err == sql.ErrNoRows {
+			// Record does not exist, create a new one.
+			log.Printf("Bot sync registering new user: %s (%s)", p.DiscordId, p.Username)
 
-            // Create a new permanent master auth token (signed with HS256).
-            tkn := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-                "discord_id":   p.DiscordId,
-                "username":     p.Username,
-                "display_name": p.DisplayName,
-                "pomelo_name":  p.PomeloName,
-                // Permanent token doesn't expire
-            })
+			// Create a new permanent master auth token (signed with HS256).
+			tkn := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+				"discord_id":   p.DiscordId,
+				"username":     p.Username,
+				"display_name": p.DisplayName,
+				"pomelo_name":  p.PomeloName,
+				// Permanent token doesn't expire
+			})
 			// Fix: Assign to the 'token' variable declared above. This is line 677.
-            token, err = tkn.SignedString([]byte(jwtSecret))
-            if err != nil {
-                log.Printf("Failed to create Discord JWT token for %s: %v", p.DiscordId, err)
-                continue // Log error and continue, don't abort batch
-            }
+			token, err = tkn.SignedString([]byte(jwtSecret))
+			if err != nil {
+				log.Printf("Failed to create Discord JWT token for %s: %v", p.DiscordId, err)
+				continue // Log error and continue, don't abort batch
+			}
 			// Fix: Use the 'token' variable. This is line 682.
-            _, err = insertStmt.Exec(p.DiscordId, p.Username, token, p.DisplayName, p.PomeloName)
-            if err != nil {
-                log.Printf("Failed to store Discord token in database for %s: %v", p.DiscordId, err)
-                continue // Log error and continue
-            }
-        } else {
-            // Record exists, update username, display_name, and pomelo_name.
-            // Bot sync provides the latest names.
-            _, err = updateStmt.Exec(p.Username, p.DisplayName, p.PomeloName, p.DiscordId)
-            if err != nil {
-                log.Printf("Failed to update discord_auth for %s: %v", p.DiscordId, err)
-                // Log error and continue processing next payload.
-                continue
-            }
-             // log.Printf("Bot sync updated user: %s (%s)", p.DiscordId, p.Username) // Optional: Log updates
-        }
+			_, err = insertStmt.Exec(p.DiscordId, p.Username, token, p.DisplayName, p.PomeloName)
+			if err != nil {
+				log.Printf("Failed to store Discord token in database for %s: %v", p.DiscordId, err)
+				continue // Log error and continue
+			}
+		} else {
+			// Record exists, update username, display_name, and pomelo_name.
+			// Bot sync provides the latest names.
+			_, err = updateStmt.Exec(p.Username, p.DisplayName, p.PomeloName, p.DiscordId)
+			if err != nil {
+				log.Printf("Failed to update discord_auth for %s: %v", p.DiscordId, err)
+				// Log error and continue processing next payload.
+				continue
+			}
+			// log.Printf("Bot sync updated user: %s (%s)", p.DiscordId, p.Username) // Optional: Log updates
+		}
 		// Fix: Increment processedCount for both new inserts and updates.
-        processedCount++
+		processedCount++
 	}
 
 	// Commit the transaction.
@@ -711,14 +707,14 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
 		return
 	}
 
-    // Use a transaction even for a single delete for atomicity (optional but good practice)
-    tx, err := ms.db.Begin()
-    if err != nil {
-        log.Printf("Failed to start delete transaction: %v", err)
-        c.AbortWithStatus(http.StatusInternalServerError)
-        return
-    }
-    defer tx.Rollback()
+	// Use a transaction even for a single delete for atomicity (optional but good practice)
+	tx, err := ms.db.Begin()
+	if err != nil {
+		log.Printf("Failed to start delete transaction: %v", err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
 
 	result, err := tx.Exec("DELETE FROM discord_auth WHERE discord_id = ?", payload.DiscordId)
 	if err != nil {
@@ -727,29 +723,29 @@ func (ms *MasterServer) HandleDiscordDelete(c *gin.Context) {
 		return
 	}
 
-    rowsAffected, err := result.RowsAffected()
-    if err != nil {
-        log.Printf("Failed to get rows affected for deletion of %s (from %s): %v", payload.DiscordId, c.ClientIP(), err)
-         // Log but continue, delete might have succeeded
-    }
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Failed to get rows affected for deletion of %s (from %s): %v", payload.DiscordId, c.ClientIP(), err)
+		// Log but continue, delete might have succeeded
+	}
 
 	if rowsAffected > 0 {
-	    log.Printf("Deleted Discord auth record for %s (from %s).", payload.DiscordId, c.ClientIP())
-        if err := tx.Commit(); err != nil {
-             log.Printf("Failed to commit delete transaction for %s: %v", payload.DiscordId, err)
-             c.AbortWithStatus(http.StatusInternalServerError)
-             return
-        }
-        c.Status(http.StatusOK)
-    } else {
-        log.Printf("Attempted to delete non-existent Discord auth record for %s (from %s).", payload.DiscordId, c.ClientIP())
-        if err := tx.Commit(); err != nil { // Still commit even if no rows affected
-             log.Printf("Failed to commit delete transaction (no rows affected) for %s: %v", payload.DiscordId, err)
-             c.AbortWithStatus(http.StatusInternalServerError)
-             return
-        }
-        c.Status(http.StatusNotFound) // Indicate it wasn't found
-    }
+		log.Printf("Deleted Discord auth record for %s (from %s).", payload.DiscordId, c.ClientIP())
+		if err := tx.Commit(); err != nil {
+			log.Printf("Failed to commit delete transaction for %s: %v", payload.DiscordId, err)
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusOK)
+	} else {
+		log.Printf("Attempted to delete non-existent Discord auth record for %s (from %s).", payload.DiscordId, c.ClientIP())
+		if err := tx.Commit(); err != nil { // Still commit even if no rows affected
+			log.Printf("Failed to commit delete transaction (no rows affected) for %s: %v", payload.DiscordId, err)
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusNotFound) // Indicate it wasn't found
+	}
 }
 
 // HandleDiscordClientAuth processes a Discord auth payload from a client (e.g., the game client).
@@ -775,7 +771,7 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 		return
 	}
 
-    // Check master server token - ASSUMPTION: This is a bot/internal endpoint
+	// Check master server token - ASSUMPTION: This is a bot/internal endpoint
 	var msToken string
 	if auth := c.GetHeader("Authorization"); auth != "" {
 		if strings.HasPrefix(auth, "Bearer ") {
@@ -799,8 +795,8 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 	jwtSecret := os.Getenv("JWT_DISCORD_SECRET")
 	if jwtSecret == "" {
 		log.Fatalf("JWT_DISCORD_SECRET not set") // Critical error
-        c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
-        return
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
+		return
 	}
 
 	// Check for existing token.
@@ -810,7 +806,7 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// Record does not exist, create a new one.
-            log.Printf("Single sync registering new user: %s (%s)", payload.DiscordId, payload.Username)
+			log.Printf("Single sync registering new user: %s (%s)", payload.DiscordId, payload.Username)
 			tkn := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 				"discord_id":   payload.DiscordId,
 				"username":     payload.Username,
@@ -824,7 +820,7 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 				c.AbortWithStatus(http.StatusInternalServerError)
 				return
 			}
-            // Insert username, display_name, and pomelo_name
+			// Insert username, display_name, and pomelo_name
 			_, err = ms.db.Exec("INSERT INTO discord_auth (discord_id, username, token, display_name, pomelo_name) VALUES (?, ?, ?, ?, ?)",
 				payload.DiscordId, payload.Username, token, payload.DisplayName, payload.PomeloName)
 			if err != nil {
@@ -839,21 +835,20 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 		}
 	} else {
 		// Record exists, update username, display_name, and pomelo_name.
-        // This assumes the single sync also sends the latest names.
+		// This assumes the single sync also sends the latest names.
 		_, err = ms.db.Exec("UPDATE discord_auth SET username = ?, display_name = ?, pomelo_name = ? WHERE discord_id = ?",
 			payload.Username, payload.DisplayName, payload.PomeloName, payload.DiscordId)
 		if err != nil {
 			log.Printf("Failed to update Discord auth record for %s: %v", payload.DiscordId, err)
 			// Log error but continue, client (bot) still gets the existing token
 		} else {
-            // log.Printf("Single sync updated user: %s", payload.DiscordId) // Optional: Log update
-        }
+			// log.Printf("Single sync updated user: %s", payload.DiscordId) // Optional: Log update
+		}
 	}
 
-    // Return the permanent token.
+	// Return the permanent token.
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
-
 
 // HandleHeartbeat processes a heartbeat from a game server.
 // Endpoint: POST /heartbeat
@@ -861,21 +856,21 @@ func (ms *MasterServer) HandleDiscordClientAuth(c *gin.Context) {
 // Body: { "host_name": "...", "map_name": "...", ... }
 func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	var heartbeat struct {
-		HostName   string       `json:"host_name"`
-		MapName    string       `json:"map_name"`
-		GameMode   string       `json:"game_mode"`
-		MaxPlayers int          `json:"max_players"`
-		Version    string 	    `json:"version"`
-		Description string      `json:"description"`
-		Playlist   string       `json:"playlist"`
-		PlaylistDisplayName string `json:"playlist_display_name"`
-		Port       int          `json:"port"`
-		HasPassword bool        `json:"has_password"`
-		HasAuth 	  bool        `json:"has_auth"`
-		Players    []PlayerInfo `json:"players"` // Array of players
-        // TotalPlayers field is computed from len(Players)
-		Transports *Transports  `json:"transports"` // Optional alternative transports (EOS, iroh, tailcat, ...)
-		Nat        *NatInfo     `json:"nat"`        // Optional NAT traversal info
+		HostName            string       `json:"host_name"`
+		MapName             string       `json:"map_name"`
+		GameMode            string       `json:"game_mode"`
+		MaxPlayers          int          `json:"max_players"`
+		Version             string       `json:"version"`
+		Description         string       `json:"description"`
+		Playlist            string       `json:"playlist"`
+		PlaylistDisplayName string       `json:"playlist_display_name"`
+		Port                int          `json:"port"`
+		HasPassword         bool         `json:"has_password"`
+		HasAuth             bool         `json:"has_auth"`
+		Players             []PlayerInfo `json:"players"` // Array of players
+		// TotalPlayers field is computed from len(Players)
+		Transports *Transports `json:"transports"` // Optional alternative transports (EOS, iroh, tailcat, ...)
+		Nat        *NatInfo    `json:"nat"`        // Optional NAT traversal info
 	}
 	if err := c.ShouldBindJSON(&heartbeat); err != nil {
 		log.Printf("Invalid heartbeat format from %s: %v", c.ClientIP(), err)
@@ -883,7 +878,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-    // Get the client IP (this is the server's public IP from the master server's perspective)
+	// Get the client IP (this is the server's public IP from the master server's perspective)
 	ip := c.ClientIP()
 
 	// Validate port.
@@ -894,7 +889,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-    // ---------- REGION-PREFIX & SANITIZATION LOGIC ----------
+	// ---------- REGION-PREFIX & SANITIZATION LOGIC ----------
 	var regionCode string
 	// Parse the IP and check for errors
 	parsedIP := net.ParseIP(ip)
@@ -907,60 +902,52 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		rec, geoipErr := ms.geoip.City(parsedIP) // Use a specific error variable for geoip
 		if geoipErr != nil {
 			log.Printf("GeoIP lookup failed for %s: %v", ip, geoipErr) // Use specific error variable
-			regionCode = RegionUNK // Treat as unknown if GeoIP fails
+			regionCode = RegionUNK                                     // Treat as unknown if GeoIP fails
 		} else {
 			regionCode = determineRegionCode(rec) // Determine region from GeoIP record
 		}
 	} else {
-        // GeoIP database not loaded (should be fatal, but handle defensively)
-        // Logged at startup if failed. Just assign UNK.
-        regionCode = RegionUNK
-    }
+		// GeoIP database not loaded (should be fatal, but handle defensively)
+		// Logged at startup if failed. Just assign UNK.
+		regionCode = RegionUNK
+	}
 
 	// Strip any old [[XXXXX]] prefix from the *original* hostname
 	cleanName := stripPrefix.ReplaceAllString(heartbeat.HostName, "")
 	cleanName = strings.TrimSpace(cleanName)
 
-    // Sanitize the clean name. This ensures the sanitization rules
-    // don't accidentally break the region prefix format itself.
-    sanitizedCleanName := strings.Map(func(r rune) rune {
-        // Keep letters, numbers, spaces, and some common punctuation. Remove others.
-        // Allow spaces. Note: Brackets '[' and ']' are deliberately excluded here
-        // as they are used for the region prefix format and should not appear in the name part.
-	    if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_:", r) {
-            return r
-        }
-	    return '_' // Replace disallowed characters with underscore
+	// Sanitize the clean name. This ensures the sanitization rules
+	// don't accidentally break the region prefix format itself.
+	sanitizedCleanName := strings.Map(func(r rune) rune {
+		// Keep letters, numbers, spaces, and some common punctuation. Remove others.
+		// Allow spaces. Note: Brackets '[' and ']' are deliberately excluded here
+		// as they are used for the region prefix format and should not appear in the name part.
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune("!@#$%^&*()-_+=.,?'_:", r) {
+			return r
+		}
+		return '_' // Replace disallowed characters with underscore
 	}, cleanName) // Apply map to the cleanName
 
-    // Trim leading/trailing underscores or spaces that might result from sanitization
-    sanitizedCleanName = strings.Trim(sanitizedCleanName, "_ ")
+	// Trim leading/trailing underscores or spaces that might result from sanitization
+	sanitizedCleanName = strings.Trim(sanitizedCleanName, "_ ")
 
 	// If the sanitized clean name is empty or too short, use a default *clean* name.
 	if len(sanitizedCleanName) < 3 { // Minimum length for the name part after region code
-	    sanitizedCleanName = "Unnamed R1Delta Server" // Default clean name
+		sanitizedCleanName = "Unnamed R1Delta Server" // Default clean name
 	}
 
-    // Construct the final hostname by prepending the region code to the sanitized clean name.
-    // The prefix is formatted as [[CODE]], e.g., [[US-EAST]]
-    heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, sanitizedCleanName) // Correctly format and assign
+	// Construct the final hostname by prepending the region code to the sanitized clean name.
+	// The prefix is formatted as [[CODE]], e.g., [[US-EAST]]
+	heartbeat.HostName = fmt.Sprintf("%s %s", regionCode, sanitizedCleanName) // Correctly format and assign
 
 	// Limit total hostname length after prefixing
 	if len(heartbeat.HostName) > 64 {
-	    heartbeat.HostName = heartbeat.HostName[:64]
+		heartbeat.HostName = heartbeat.HostName[:64]
 	}
 	// ---------- END REGION-PREFIX & SANITIZATION LOGIC ----------
 
-
-	// Disallow specific map names if needed
-	// if strings.Contains(heartbeat.MapName, "mp_npe") {
-	// 	log.Printf("Ignoring heartbeat from %s:%d on disallowed map '%s'", ip, heartbeat.Port, heartbeat.MapName)
-	// 	c.Status(http.StatusOK) // Indicate successful processing, but server won't be listed
-	// 	return
-	// }
-
 	// Validate map name.
-	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName)  {
+	if heartbeat.MapName == "" || len(heartbeat.MapName) > 32 || !isValidMapName(heartbeat.MapName) {
 		log.Printf("Invalid map name %q from %s:%d", heartbeat.MapName, ip, heartbeat.Port)
 		c.String(http.StatusBadRequest, "Invalid map name format (lowercase letters, numbers, underscores only)")
 		c.Abort()
@@ -975,22 +962,21 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-    // Validate max players.
- 	if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers > 128 { // Assuming reasonable max players, e.g., up to 128
- 		log.Printf("Invalid max players %d from %s:%d", heartbeat.MaxPlayers, ip, heartbeat.Port)
- 		c.String(http.StatusBadRequest, "Invalid max players (must be 2-128)") // Adjust range as needed
- 		c.Abort()
- 		return
- 	}
+	// Validate max players.
+	if heartbeat.MaxPlayers <= 1 || heartbeat.MaxPlayers > 128 { // Assuming reasonable max players, e.g., up to 128
+		log.Printf("Invalid max players %d from %s:%d", heartbeat.MaxPlayers, ip, heartbeat.Port)
+		c.String(http.StatusBadRequest, "Invalid max players (must be 2-128)") // Adjust range as needed
+		c.Abort()
+		return
+	}
 
-    // Validate player count doesn't exceed max players.
- 	if len(heartbeat.Players) > heartbeat.MaxPlayers {
- 	    log.Printf("Too many players (%d) vs max players (%d) from %s:%d", len(heartbeat.Players), heartbeat.MaxPlayers, ip, heartbeat.Port)
- 	    c.String(http.StatusBadRequest, "Player count exceeds max players")
- 	    c.Abort()
- 	    return
- 	}
-
+	// Validate player count doesn't exceed max players.
+	if len(heartbeat.Players) > heartbeat.MaxPlayers {
+		log.Printf("Too many players (%d) vs max players (%d) from %s:%d", len(heartbeat.Players), heartbeat.MaxPlayers, ip, heartbeat.Port)
+		c.String(http.StatusBadRequest, "Player count exceeds max players")
+		c.Abort()
+		return
+	}
 
 	key := fmt.Sprintf("%s:%d", ip, heartbeat.Port) // Key is IP:Port
 
@@ -1005,7 +991,7 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 	// Retrieve existing server entry if it exists to preserve validation status.
 	existingEntry, serverExists := ms.servers[key]
 
-	// Limit maximum servers per IP to 5.
+	// Limit maximum servers per IP to 20, matching the deployed policy.
 	if !serverExists {
 		count := 0
 		for _, s := range ms.servers {
@@ -1016,33 +1002,33 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		}
 		if count >= 20 {
 			log.Printf("Too many servers (%d) for IP %s from %s", count, ip, c.ClientIP())
-			c.String(http.StatusBadRequest, "Maximum 5 servers per IP")
+			c.String(http.StatusBadRequest, "Maximum 20 servers per IP")
 			c.Abort()
 			return
 		}
 	}
 
-    // Create or update the server entry
+	// Create or update the server entry
 	entry := &ServerEntry{
-		HostName:    heartbeat.HostName, // This now holds the correctly prefixed and sanitized name
-		MapName:     heartbeat.MapName,
-		GameMode:    heartbeat.GameMode,
-		MaxPlayers:  heartbeat.MaxPlayers,
-		HasPassword: heartbeat.HasPassword,
-		HasAuth:    heartbeat.HasAuth,
-		Description: heartbeat.Description,
-		Playlist:   heartbeat.Playlist,
-		TotalPlayers: len(heartbeat.Players), // Calculate TotalPlayers from len(Players)
-		Version:     heartbeat.Version, // Store Version
+		HostName:            heartbeat.HostName, // This now holds the correctly prefixed and sanitized name
+		MapName:             heartbeat.MapName,
+		GameMode:            heartbeat.GameMode,
+		MaxPlayers:          heartbeat.MaxPlayers,
+		HasPassword:         heartbeat.HasPassword,
+		HasAuth:             heartbeat.HasAuth,
+		Description:         heartbeat.Description,
+		Playlist:            heartbeat.Playlist,
+		TotalPlayers:        len(heartbeat.Players), // Calculate TotalPlayers from len(Players)
+		Version:             heartbeat.Version,      // Store Version
 		PlaylistDisplayName: heartbeat.PlaylistDisplayName,
-		IP:          ip, // Store the derived IP
-		Port:        heartbeat.Port,
-		Players:     heartbeat.Players, // Store the player list
-		LastUpdated: time.Now(),
+		IP:                  ip, // Store the derived IP
+		Port:                heartbeat.Port,
+		Players:             heartbeat.Players, // Store the player list
+		LastUpdated:         time.Now(),
 		// Preserve existing validation status if server already exists, otherwise default to false.
-        // If a server stops heartbeating and is removed, the next heartbeat is treated as new (Validated: false).
-		Validated:   serverExists && existingEntry.Validated,
-		Transports:  sanitizeTransports(heartbeat.Transports, ip),
+		// If a server stops heartbeating and is removed, the next heartbeat is treated as new (Validated: false).
+		Validated:  serverExists && existingEntry.Validated,
+		Transports: sanitizeTransports(heartbeat.Transports, ip),
 	}
 	if serverExists {
 		entry.Reach = existingEntry.Reach
@@ -1069,46 +1055,44 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 		entry.WantTurn = heartbeat.Nat.WantTurn
 	}
 
-    // Store/update the server entry
-    ms.servers[key] = entry
-    log.Printf("Received heartbeat from %s:%d (Hostname: %s, Players: %d/%d, Validated: %t)",
-        ip, heartbeat.Port, entry.HostName, entry.TotalPlayers, entry.MaxPlayers, entry.Validated)
-
+	// Store/update the server entry
+	ms.servers[key] = entry
+	log.Printf("Received heartbeat from %s:%d (Hostname: %s, Players: %d/%d, Validated: %t)",
+		ip, heartbeat.Port, entry.HostName, entry.TotalPlayers, entry.MaxPlayers, entry.Validated)
 
 	// Trigger validation if needed.
-    // Only re-validate if it's a new entry, or if it was previously unvalidated,
-    // or if the last challenge attempt was more than ChallengeInterval ago.
-    // Avoid challenging on *every* heartbeat if the server is already validated.
-    const ChallengeInterval = 5 * time.Minute // How often to re-validate a validated server
+	// Only re-validate if it's a new entry, or if it was previously unvalidated,
+	// or if the last challenge attempt was more than ChallengeInterval ago.
+	// Avoid challenging on *every* heartbeat if the server is already validated.
+	const ChallengeInterval = 5 * time.Minute // How often to re-validate a validated server
 
-    ms.challengeMu.Lock()
-    lastChallengeTime, challengeAttemptedRecently := ms.challenges[key]
-    ms.challengeMu.Unlock()
+	ms.challengeMu.Lock()
+	lastChallengeTime, challengeAttemptedRecently := ms.challenges[key]
+	ms.challengeMu.Unlock()
 
-    // Decide if we need to challenge:
-    // 1. Server is new (not in map before this heartbeat).
-    // 2. Server exists but is not currently validated.
-    // 3. Server exists, is validated, but it's been a while since the last challenge attempt.
-    //    This check ensures we periodically re-validate even validated servers, but not too often.
-    needsChallenge := !serverExists ||
-                      !entry.Validated ||
-                      relayChanged ||
-                      (entry.Validated && (!challengeAttemptedRecently || time.Since(lastChallengeTime) > ChallengeInterval))
+	// Decide if we need to challenge:
+	// 1. Server is new (not in map before this heartbeat).
+	// 2. Server exists but is not currently validated.
+	// 3. Server exists, is validated, but it's been a while since the last challenge attempt.
+	//    This check ensures we periodically re-validate even validated servers, but not too often.
+	needsChallenge := !serverExists ||
+		!entry.Validated ||
+		relayChanged ||
+		(entry.Validated && (!challengeAttemptedRecently || time.Since(lastChallengeTime) > ChallengeInterval))
 
-
-    if needsChallenge {
-        log.Printf("Triggering validation for %s:%d (New: %t, Validated: %t, Last Challenge: %v)",
-            ip, heartbeat.Port, !serverExists, entry.Validated, lastChallengeTime)
-        // Mark challenge attempt time *before* starting the goroutine
-        ms.challengeMu.Lock()
-        ms.challenges[key] = time.Now()
-        ms.challengeMu.Unlock()
-        go ms.PerformValidation(ip, heartbeat.Port) // Use the derived IP
-    } else {
-        // Optional: Log if validation is skipped for debugging
-        // log.Printf("Validation not needed for %s:%d (Validated: %t, Last Challenge: %v)",
-        //     ip, heartbeat.Port, entry.Validated, lastChallengeTime)
-    }
+	if needsChallenge {
+		log.Printf("Triggering validation for %s:%d (New: %t, Validated: %t, Last Challenge: %v)",
+			ip, heartbeat.Port, !serverExists, entry.Validated, lastChallengeTime)
+		// Mark challenge attempt time *before* starting the goroutine
+		ms.challengeMu.Lock()
+		ms.challenges[key] = time.Now()
+		ms.challengeMu.Unlock()
+		go ms.PerformValidation(ip, heartbeat.Port) // Use the derived IP
+	} else {
+		// Optional: Log if validation is skipped for debugging
+		// log.Printf("Validation not needed for %s:%d (Validated: %t, Last Challenge: %v)",
+		//     ip, heartbeat.Port, entry.Validated, lastChallengeTime)
+	}
 
 	// Build the response while still holding the lock, then release it before
 	// doing any (potentially slow) TURN credential minting.
@@ -1146,10 +1130,10 @@ func (ms *MasterServer) HandleHeartbeat(c *gin.Context) {
 // reached by (direct UDP, its rendezvous NAT mapping, its TURN relay) and marks
 // it validated if any of them answers correctly.
 func (ms *MasterServer) PerformValidation(ip string, port int) {
-	key := fmt.Sprintf("%s:%d", ip, port) // Use IP:Port as key
+	key := fmt.Sprintf("%s:%d", ip, port)                      // Use IP:Port as key
 	log.Printf("[Validation] Starting validation for %s", key) // Log key
 
-    // Check if the server entry still exists in the map. It might have been removed by cleanup.
+	// Check if the server entry still exists in the map. It might have been removed by cleanup.
 	// One validation per server at a time: overlapping runs would race on
 	// the rendezvous socket and the loser could unlist a reachable server.
 	ms.challengeMu.Lock()
@@ -1165,17 +1149,17 @@ func (ms *MasterServer) PerformValidation(ip string, port int) {
 		ms.challengeMu.Unlock()
 	}()
 
-    ms.serversMu.RLock()
-    entry, exists := ms.servers[key]
-    var turnRelay string
-    if exists {
-        turnRelay = entry.TurnRelay
-    }
-    ms.serversMu.RUnlock()
-    if !exists {
-        log.Printf("[Validation] Server %s disappeared from map before validation could start.", key)
-        return // Server removed, no need to validate
-    }
+	ms.serversMu.RLock()
+	entry, exists := ms.servers[key]
+	var turnRelay string
+	if exists {
+		turnRelay = entry.TurnRelay
+	}
+	ms.serversMu.RUnlock()
+	if !exists {
+		log.Printf("[Validation] Server %s disappeared from map before validation could start.", key)
+		return // Server removed, no need to validate
+	}
 
 	var reach Reachability
 	reach.Direct = ms.challengeDirect(key)
@@ -1283,14 +1267,14 @@ func validateResponse(resp []byte, nonce string) bool {
 		return false
 	}
 
-    // Check for "connect" string - Assuming it starts at index 9
+	// Check for "connect" string - Assuming it starts at index 9
 	connectStr := string(resp[9:16]) // Index 9 to 15 (7 bytes)
 	if connectStr != "connect" {
 		log.Printf("[Validation] Expected 'connect' at index 9-15, got %q", connectStr)
 		return false
 	}
 
-    // Check for the returned nonce - Assuming it starts at index 16
+	// Check for the returned nonce - Assuming it starts at index 16
 	responseNonce := string(resp[16:26]) // Index 16 to 25 (10 bytes)
 	if responseNonce != nonce {
 		log.Printf("[Validation] Nonce mismatch: expected %q, got %q", nonce, responseNonce)
@@ -1317,11 +1301,11 @@ func (ms *MasterServer) GetServers(c *gin.Context) {
 			validServers = append(validServers, s)
 		}
 	}
-    // Sort the validServers slice by TotalPlayers in descending order.
-    sort.Slice(validServers, func(i, j int) bool {
-        // For descending order, return true if i's player count is greater than j's.
-        return validServers[i].TotalPlayers > validServers[j].TotalPlayers
-    })
+	// Sort the validServers slice by TotalPlayers in descending order.
+	sort.Slice(validServers, func(i, j int) bool {
+		// For descending order, return true if i's player count is greater than j's.
+		return validServers[i].TotalPlayers > validServers[j].TotalPlayers
+	})
 	c.JSON(http.StatusOK, validServers)
 }
 
@@ -1350,28 +1334,28 @@ func (ms *MasterServer) CleanupOldEntries() {
 	defer ticker.Stop()
 	for range ticker.C {
 		ms.serversMu.Lock()
-        keysToDelete := []string{}
+		keysToDelete := []string{}
 		for k, s := range ms.servers {
-            // Remove server if it hasn't sent a heartbeat in 90 seconds
+			// Remove server if it hasn't sent a heartbeat in 90 seconds
 			if time.Since(s.LastUpdated) > 90*time.Second {
 				log.Printf("[Cleanup] Removing server %s (%s), last updated %v ago, validated=%v",
 					s.HostName, k, time.Since(s.LastUpdated), s.Validated)
-                keysToDelete = append(keysToDelete, k)
+				keysToDelete = append(keysToDelete, k)
 			}
 		}
-        for _, k := range keysToDelete {
-            delete(ms.servers, k)
-            ms.forgetNatState(k)
-            // Also remove associated challenge and heartbeat entries
-            ms.challengeMu.Lock()
-            delete(ms.challenges, k)
-            ms.challengeMu.Unlock()
-             // lastHeartbeats map is not used anymore, removal was based on old logic.
-        }
+		for _, k := range keysToDelete {
+			delete(ms.servers, k)
+			ms.forgetNatState(k)
+			// Also remove associated challenge and heartbeat entries
+			ms.challengeMu.Lock()
+			delete(ms.challenges, k)
+			ms.challengeMu.Unlock()
+			// lastHeartbeats map is not used anymore, removal was based on old logic.
+		}
 		ms.serversMu.Unlock()
-        if len(keysToDelete) > 0 {
-            log.Printf("[Cleanup] Removed %d old server entries.", len(keysToDelete))
-        }
+		if len(keysToDelete) > 0 {
+			log.Printf("[Cleanup] Removed %d old server entries.", len(keysToDelete))
+		}
 	}
 }
 
@@ -1395,31 +1379,30 @@ func fetchCloudflareIPs() ([]string, error) {
 	if len(ips) == 0 {
 		return nil, fmt.Errorf("empty Cloudflare IP list received")
 	}
-    log.Printf("Fetched %d Cloudflare IPv4 ranges.", len(ips))
+	log.Printf("Fetched %d Cloudflare IPv4 ranges.", len(ips))
 
-    // Also fetch IPv6 ranges if needed
-    respV6, err := client.Get("https://www.cloudflare.com/ips-v6")
-    if err != nil {
-        log.Printf("Warning: Failed to fetch Cloudflare IPv6 IPs: %v", err)
-        // Continue with only IPv4 if IPv6 fails
-        return ips, nil
-    }
-    defer respV6.Body.Close()
-    if respV6.StatusCode != http.StatusOK {
-        log.Printf("Warning: Unexpected status code from Cloudflare IPs (v6) endpoint: %d", respV6.StatusCode)
-         return ips, nil // Continue with only IPv4
-    }
-    bodyV6, err := io.ReadAll(respV6.Body)
-    if err != nil {
-        log.Printf("Warning: Failed to read Cloudflare IPv6 IPs: %v", err)
-        return ips, nil // Continue with only IPv4
-    }
-    ipsV6 := strings.Split(strings.TrimSpace(string(bodyV6)), "\n")
-     if len(ipsV6) > 0 {
-        log.Printf("Fetched %d Cloudflare IPv6 ranges.", len(ipsV6))
-        ips = append(ips, ipsV6...)
-     }
-
+	// Also fetch IPv6 ranges if needed
+	respV6, err := client.Get("https://www.cloudflare.com/ips-v6")
+	if err != nil {
+		log.Printf("Warning: Failed to fetch Cloudflare IPv6 IPs: %v", err)
+		// Continue with only IPv4 if IPv6 fails
+		return ips, nil
+	}
+	defer respV6.Body.Close()
+	if respV6.StatusCode != http.StatusOK {
+		log.Printf("Warning: Unexpected status code from Cloudflare IPs (v6) endpoint: %d", respV6.StatusCode)
+		return ips, nil // Continue with only IPv4
+	}
+	bodyV6, err := io.ReadAll(respV6.Body)
+	if err != nil {
+		log.Printf("Warning: Failed to read Cloudflare IPv6 IPs: %v", err)
+		return ips, nil // Continue with only IPv4
+	}
+	ipsV6 := strings.Split(strings.TrimSpace(string(bodyV6)), "\n")
+	if len(ipsV6) > 0 {
+		log.Printf("Fetched %d Cloudflare IPv6 ranges.", len(ipsV6))
+		ips = append(ips, ipsV6...)
+	}
 
 	return ips, nil
 }
@@ -1455,18 +1438,18 @@ func getPublicIP() (string, error) {
 // Response: 200 or 400 or 404 or 500
 func (ms *MasterServer) HandleDelete(c *gin.Context) {
 	portStr := c.Param("port")
-    port, err := strconv.Atoi(portStr)
-    if err != nil {
-        log.Printf("Invalid port '%s' in delete request from %s: %v", portStr, c.ClientIP(), err)
-        c.AbortWithStatus(http.StatusBadRequest)
-        return
-    }
-    if port <= 1024 || port > 65535 {
-        log.Printf("Invalid port number %d in delete request from %s", port, c.ClientIP())
-        c.String(http.StatusBadRequest, "Invalid port number (must be 1025-65535)")
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Printf("Invalid port '%s' in delete request from %s: %v", portStr, c.ClientIP(), err)
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	if port <= 1024 || port > 65535 {
+		log.Printf("Invalid port number %d in delete request from %s", port, c.ClientIP())
+		c.String(http.StatusBadRequest, "Invalid port number (must be 1025-65535)")
 		c.Abort()
-        return
-    }
+		return
+	}
 
 	clientIP := c.ClientIP() // Get IP of the client sending the request
 
@@ -1475,19 +1458,19 @@ func (ms *MasterServer) HandleDelete(c *gin.Context) {
 	ms.serversMu.Lock()
 	defer ms.serversMu.Unlock()
 
-    if _, exists := ms.servers[key]; !exists {
-         log.Printf("Attempted to delete non-existent server: %s (from %s)", key, c.ClientIP())
-         c.Status(http.StatusNotFound) // Indicate the server wasn't found
-         return
-    }
+	if _, exists := ms.servers[key]; !exists {
+		log.Printf("Attempted to delete non-existent server: %s (from %s)", key, c.ClientIP())
+		c.Status(http.StatusNotFound) // Indicate the server wasn't found
+		return
+	}
 
 	delete(ms.servers, key)
 	ms.forgetNatState(key)
-    // Also clean up associated challenge and heartbeat entries
-    ms.challengeMu.Lock()
-    delete(ms.challenges, key)
-    ms.challengeMu.Unlock()
-    // lastHeartbeats map not used anymore
+	// Also clean up associated challenge and heartbeat entries
+	ms.challengeMu.Lock()
+	delete(ms.challenges, key)
+	ms.challengeMu.Unlock()
+	// lastHeartbeats map not used anymore
 
 	log.Printf("Deleted server entry: %s (requested by %s)", key, c.ClientIP())
 	c.Status(http.StatusOK)
@@ -1496,30 +1479,29 @@ func (ms *MasterServer) HandleDelete(c *gin.Context) {
 // NewMasterServer creates and initializes a MasterServer instance.
 func NewMasterServer() *MasterServer {
 	return &MasterServer{
-		servers:        make(map[string]*ServerEntry),
-		challenges:     make(map[string]time.Time),
-		validating:     make(map[string]bool),
+		servers:    make(map[string]*ServerEntry),
+		challenges: make(map[string]time.Time),
+		validating: make(map[string]bool),
 		// lastHeartbeats map is effectively replaced by ServerEntry.LastUpdated
-		limiters:       make(map[string]*rate.Limiter),
-        // DB and GeoIP are set after creation in main
+		limiters: make(map[string]*rate.Limiter),
+		// DB and GeoIP are set after creation in main
 	}
 }
 
 // LogRequestMiddleware logs basic request info.
 func LogRequestMiddleware() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        // c.ClientIP() already handles X-Forwarded-For/CF-Connecting-IP after trusted proxies are set.
-        log.Printf("DEBUG: Received request: Method=%s Path=%s ClientIP=%s RemoteAddr=%s CF-Ray=%s",
-            c.Request.Method,
-            c.Request.URL.Path,
-            c.ClientIP(), // Use ClientIP which respects trusted proxies
-            c.Request.RemoteAddr, // IP Go sees directly (Cloudflare edge or direct)
-            c.GetHeader("CF-Ray"),           // Cloudflare Ray ID
-        )
-        c.Next() // Continue processing
-    }
+	return func(c *gin.Context) {
+		// c.ClientIP() already handles X-Forwarded-For/CF-Connecting-IP after trusted proxies are set.
+		log.Printf("DEBUG: Received request: Method=%s Path=%s ClientIP=%s RemoteAddr=%s CF-Ray=%s",
+			c.Request.Method,
+			c.Request.URL.Path,
+			c.ClientIP(),          // Use ClientIP which respects trusted proxies
+			c.Request.RemoteAddr,  // IP Go sees directly (Cloudflare edge or direct)
+			c.GetHeader("CF-Ray"), // Cloudflare Ray ID
+		)
+		c.Next() // Continue processing
+	}
 }
-
 
 func main() {
 	// Load environment variables.
@@ -1528,16 +1510,15 @@ func main() {
 	}
 
 	// Check essential environment variables EARLY.
-    if os.Getenv("MS_TOKEN") == "" {
-        log.Fatalf("MS_TOKEN environment variable not set! This token is required for internal/bot endpoints.")
-    }
-    if os.Getenv("JWT_DISCORD_SECRET") == "" {
-        log.Fatalf("JWT_DISCORD_SECRET environment variable not set! This secret is required for signing permanent user tokens.")
-    }
-     if os.Getenv("CLIENT_ID") == "" || os.Getenv("CLIENT_SECRET") == "" || os.Getenv("REDIRECT_URI") == "" {
-         log.Fatalf("Discord OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) not set! These are required for the client OAuth flow.")
-     }
-
+	if os.Getenv("MS_TOKEN") == "" {
+		log.Fatalf("MS_TOKEN environment variable not set! This token is required for internal/bot endpoints.")
+	}
+	if os.Getenv("JWT_DISCORD_SECRET") == "" {
+		log.Fatalf("JWT_DISCORD_SECRET environment variable not set! This secret is required for signing permanent user tokens.")
+	}
+	if os.Getenv("CLIENT_ID") == "" || os.Getenv("CLIENT_SECRET") == "" || os.Getenv("REDIRECT_URI") == "" {
+		log.Fatalf("Discord OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) not set! These are required for the client OAuth flow.")
+	}
 
 	// Set Gin to release mode.
 	gin.SetMode(gin.ReleaseMode)
@@ -1549,7 +1530,7 @@ func main() {
 	}
 	defer db.Close()
 
-    // Create table if it doesn't exist
+	// Create table if it doesn't exist
 	sqlStmt := `CREATE TABLE IF NOT EXISTS discord_auth (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     discord_id TEXT NOT NULL UNIQUE,
@@ -1559,45 +1540,44 @@ func main() {
     pomelo_name TEXT, -- Discord's old username#discriminator format (if needed)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`
-    _, err = db.Exec(sqlStmt)
-    if err != nil {
-        log.Fatalf("Failed to create discord_auth table: %v", err)
-    }
-
+	_, err = db.Exec(sqlStmt)
+	if err != nil {
+		log.Fatalf("Failed to create discord_auth table: %v", err)
+	}
 
 	// Set WAL mode for better concurrency/performance with SQLite
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")
 	if err != nil {
 		log.Printf("Warning: Failed to set WAL mode: %v", err)
-        // Not fatal, but log the issue
+		// Not fatal, but log the issue
 	} else {
-        log.Println("Database journal_mode set to WAL.")
-    }
+		log.Println("Database journal_mode set to WAL.")
+	}
 
 	// Set connection limits for SQLite
-    db.SetMaxOpenConns(10) // Adjust based on expected load
-    db.SetMaxIdleConns(5)
-    db.SetConnMaxLifetime(5 * time.Minute)
-    log.Println("Database connection pool settings applied.")
-
+	db.SetMaxOpenConns(10) // Adjust based on expected load
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	log.Println("Database connection pool settings applied.")
 
 	// --- GeoIP init ------------------------------------------------------
 	dbPath := os.Getenv("GEOIP_DB_PATH")
-	if dbPath == "" { dbPath = "GeoLite2-City.mmdb" }
+	if dbPath == "" {
+		dbPath = "GeoLite2-City.mmdb"
+	}
 
 	geoipRdr, err := geoip2.Open(dbPath)
 	if err != nil {
-        // Make GeoIP loading non-fatal, but log clearly that it failed.
+		// Make GeoIP loading non-fatal, but log clearly that it failed.
 		log.Printf("WARNING: Cannot open GeoIP DB %q: %v. Regional prefixes will not be available.", dbPath, err)
-        geoipRdr = nil // Explicitly set to nil if it failed
+		geoipRdr = nil // Explicitly set to nil if it failed
 	} else {
-        log.Printf("GeoIP database loaded from %s", dbPath)
-    }
+		log.Printf("GeoIP database loaded from %s", dbPath)
+	}
 	if geoipRdr != nil {
-        defer geoipRdr.Close() // Close reader on program exit
-    }
+		defer geoipRdr.Close() // Close reader on program exit
+	}
 	// ---------------------------------------------------------------------
-
 
 	// Fetch Cloudflare IP ranges.
 	cfIPs, err := fetchCloudflareIPs()
@@ -1610,20 +1590,19 @@ func main() {
 			"190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
 			"198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
 			"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
-            // Add IPv6 fallbacks if necessary
-            "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32",
-            "2405:b500::/32", "2405:8100::/48", "2a06:98c0::/29",
-            "2c0f:f248::/32",
+			// Add IPv6 fallbacks if necessary
+			"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32",
+			"2405:b500::/32", "2405:8100::/48", "2a06:98c0::/29",
+			"2c0f:f248::/32",
 		}
-        log.Printf("Using hardcoded fallback Cloudflare IPs (%d entries).", len(cfIPs))
+		log.Printf("Using hardcoded fallback Cloudflare IPs (%d entries).", len(cfIPs))
 	} else {
-         log.Printf("Successfully fetched Cloudflare IPs (%d entries).", len(cfIPs))
-    }
-
+		log.Printf("Successfully fetched Cloudflare IPs (%d entries).", len(cfIPs))
+	}
 
 	// Initialize master server instance.
 	ms := NewMasterServer()
-	ms.db    = db
+	ms.db = db
 	ms.geoip = geoipRdr // Assign the reader (can be nil if loading failed)
 
 	// NAT traversal helpers (UDP rendezvous + optional Cloudflare TURN broker).
@@ -1631,33 +1610,37 @@ func main() {
 	ms.turn = newTurnBrokerFromEnv()
 	ms.identity = newIdentitySignerFromEnv()
 	if ms.rendezvous != nil {
+		ms.rendezvous.mu.Lock()
 		ms.rendezvous.onMapped = ms.onServerMapped
+		ms.rendezvous.mu.Unlock()
 	}
 
 	// Start the cleanup goroutine.
 	go ms.CleanupOldEntries()
 
 	// Set up Gin.
-	r := gin.New() // Use gin.New() to manually add middleware
-    r.Use(gin.Logger()) // Add default logger middleware (logs basic request info)
-    r.Use(gin.Recovery()) // Add default recovery middleware (catches panics)
-    r.Use(LogRequestMiddleware()) // Add custom request logger (more detail)
+	r := gin.New()                // Use gin.New() to manually add middleware
+	r.Use(gin.Logger())           // Add default logger middleware (logs basic request info)
+	r.Use(gin.Recovery())         // Add default recovery middleware (catches panics)
+	r.Use(LogRequestMiddleware()) // Add custom request logger (more detail)
 
 	// Configure trusted proxies.
 	// This is CRITICAL if running behind Cloudflare (or any proxy)
 	// to get the real client IP from headers like CF-Connecting-IP.
 	if len(cfIPs) > 0 {
-        if err := r.SetTrustedProxies(cfIPs); err != nil {
-            log.Fatalf("Failed to set trusted proxies: %v", err)
-        } else {
-            log.Println("Trusted proxies configured.")
-        }
-    } else {
-         log.Println("No trusted proxies configured (empty list). ClientIP will use RemoteAddr.")
-    }
-     // Ensure the correct headers are prioritized for resolving the client IP
-     r.RemoteIPHeaders = []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"}
-
+		if err := r.SetTrustedProxies(cfIPs); err != nil {
+			log.Fatalf("Failed to set trusted proxies: %v", err)
+		} else {
+			log.Println("Trusted proxies configured.")
+		}
+	} else {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			log.Fatalf("Failed to disable trusted proxies: %v", err)
+		}
+		log.Println("No trusted proxies configured (empty list). ClientIP will use RemoteAddr.")
+	}
+	// Ensure the correct headers are prioritized for resolving the client IP
+	r.RemoteIPHeaders = []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"}
 
 	r.Use(ms.rateLimitMiddleware()) // Apply per-IP rate limiting AFTER trusted proxies are set
 
@@ -1665,7 +1648,7 @@ func main() {
 	r.POST("/heartbeat", ms.HandleHeartbeat)
 	r.DELETE("/heartbeat/:port", ms.HandleDelete) // Port is path parameter
 	r.GET("/servers", ms.GetServers)
-	r.GET("/players",ms.GetPlayerCount)
+	r.GET("/players", ms.GetPlayerCount)
 	r.POST("/nat/connect", ms.HandleNatConnect) // CLIENT asks for a punch ticket + a server's transports
 	r.POST("/nat/attest", ms.HandleNatAttest)   // CLIENT asks for an identity token for an overlay address
 
@@ -1673,22 +1656,22 @@ func main() {
 	r.GET("/discord-auth", ms.HandleDiscordAuth) // CLIENT OAuth2 callback handler (No MS_TOKEN)
 	// Re-mapping POST /discord-auth to be a bot endpoint requiring MS_TOKEN,
 	// similar to discord-auth-chunk but for a single user.
-	r.POST("/discord-auth", ms.HandleDiscordClientAuth) // BOT/INTERNAL single user sync (Requires MS_TOKEN)
+	r.POST("/discord-auth", ms.HandleDiscordClientAuth)      // BOT/INTERNAL single user sync (Requires MS_TOKEN)
 	r.POST("/discord-auth-chunk", ms.HandleDiscordAuthChunk) // BOT/INTERNAL bulk user sync (Requires MS_TOKEN)
-	r.DELETE("/discord-auth", ms.HandleDiscordDelete) // BOT/INTERNAL delete user (Requires MS_TOKEN)
-	r.GET("/user", ms.HandleUser) // CLIENT get user info by token (Requires permanent token)
+	r.DELETE("/discord-auth", ms.HandleDiscordDelete)        // BOT/INTERNAL delete user (Requires MS_TOKEN)
+	r.GET("/user", ms.HandleUser)                            // CLIENT get user info by token (Requires permanent token)
 
 	r.POST("/server-token", ms.HandlePerServerToken) // SERVER gets JWT using permanent token (Requires permanent token)
 
 	r.Static("/files", "public") // Serve static files
 
 	// Start server.
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "80" // Default to 80
-    }
-    listenAddr := fmt.Sprintf(":%s", port)
-    log.Printf("Starting server on %s...", listenAddr)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "80" // Default to 80
+	}
+	listenAddr := fmt.Sprintf(":%s", port)
+	log.Printf("Starting server on %s...", listenAddr)
 	if err := r.Run(listenAddr); err != nil {
 		log.Fatalf("Failed to run server: %v", err)
 	}

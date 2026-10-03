@@ -358,6 +358,13 @@ func startRendezvous() *Rendezvous {
 		}
 		public = net.JoinHostPort(ip, strconv.Itoa(conn.LocalAddr().(*net.UDPAddr).Port))
 	}
+	advertised, err := parsePublicAddrPort(public)
+	if err != nil || !advertised.Addr().Is4() || advertised.Addr().IsUnspecified() {
+		log.Printf("[NAT] Invalid RENDEZVOUS_PUBLIC_ADDR %q: expected an IPv4 address and nonzero port", public)
+		conn.Close()
+		return nil
+	}
+	public = advertised.String()
 	rv := newRendezvous(conn, public)
 	go rv.readLoop()
 	go rv.gcLoop()
@@ -920,7 +927,12 @@ func (ms *MasterServer) HandleNatConnect(c *gin.Context) {
 	if ok {
 		resp.P2P = entry.P2P
 		resp.Reach = entry.Reach
-		resp.Transports = entry.Transports
+		if entry.Transports != nil {
+			// Validation can replace Turn while the response is encoded after
+			// releasing serversMu. Nested transport values are immutable.
+			transports := *entry.Transports
+			resp.Transports = &transports
+		}
 		serverIP, _ = netip.ParseAddr(entry.IP)
 		if serverIP.Unmap() == clientIP && clientIP.IsValid() {
 			// Same public IP: the server's LAN addresses are the best bet.

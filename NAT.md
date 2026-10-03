@@ -71,7 +71,7 @@ it) and punch requests/acks towards servers. Packet formats are documented in
 | Env var | Default | Meaning |
 |---------|---------|---------|
 | `RENDEZVOUS_LISTEN` | `:37999` | UDP listen address, or `off` |
-| `RENDEZVOUS_PUBLIC_ADDR` | discovered public IP + listen port | Address advertised to servers/clients. Must be the origin, not a Cloudflare-proxied name. |
+| `RENDEZVOUS_PUBLIC_ADDR` | discovered public IP + listen port | Numeric IPv4 address and nonzero port advertised to servers/clients. Must be the origin, not a Cloudflare-proxied name. Invalid, IPv6, and unspecified addresses disable rendezvous. |
 | `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN` | unset | Cloudflare Realtime TURN key; TURN is disabled without them |
 | `CF_TURN_TTL` | `43200` | Credential lifetime in seconds (cached per server, re-minted with < 1/4 left) |
 | `CF_TURN_API_URL` | Cloudflare `generate-ice-servers` URL | Override (format string taking the key id), e.g. for a self-hosted TURN credential service |
@@ -84,6 +84,14 @@ the server leaves the list. The Cloudflare API token stays in this process.
 
 The rendezvous port must be reachable over UDP from the internet (open it in
 the firewall next to the HTTP port).
+
+HTTP client IP headers are trusted only from the configured Cloudflare proxy
+ranges. An empty proxy list disables header trust rather than trusting every
+requester. NAT ticket registration must originate from the same IPv4 address
+as its HTTP request; HTTP and UDP therefore need a consistent public route.
+
+The deployed heartbeat policy permits 20 servers per public IP and does not
+exclude `mp_npe` maps.
 
 ## Tests
 
